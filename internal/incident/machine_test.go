@@ -1,3 +1,22 @@
 package incident
-import ("testing"; "github.com/alexandergg-0520/voxellink-monitor/internal/domain")
-func TestFailureAndRecoveryConfirmation(t *testing.T) { m:=New(domain.Operational); for i:=0;i<2;i++ { if _, changed:=m.Apply(domain.CheckResult{Outcome:domain.StatusTimeout}); changed { t.Fatal("outage confirmed too early") } }; if state,changed:=m.Apply(domain.CheckResult{Outcome:domain.StatusTimeout}); !changed || state!=domain.Outage { t.Fatalf("got %s changed=%v",state,changed) }; m.Apply(domain.CheckResult{Outcome:domain.Success}); if state,changed:=m.Apply(domain.CheckResult{Outcome:domain.Success}); !changed || state!=domain.Operational { t.Fatalf("got %s changed=%v",state,changed) } }
+
+import (
+	"github.com/alexandergg-0520/voxellink-monitor/internal/domain"
+	"testing"
+)
+
+func TestFailureAndRecoveryConfirmation(t *testing.T) {
+	m := New(domain.Operational)
+	for i := 0; i < 2; i++ {
+		if _, changed := m.Apply(domain.CheckResult{Outcome: domain.StatusTimeout}); changed {
+			t.Fatal("outage confirmed too early")
+		}
+	}
+	if state, changed := m.Apply(domain.CheckResult{Outcome: domain.StatusTimeout}); !changed || state != domain.Outage {
+		t.Fatalf("got %s changed=%v", state, changed)
+	}
+	m.Apply(domain.CheckResult{Outcome: domain.Success})
+	if state, changed := m.Apply(domain.CheckResult{Outcome: domain.Success}); !changed || state != domain.Operational {
+		t.Fatalf("got %s changed=%v", state, changed)
+	}
+}

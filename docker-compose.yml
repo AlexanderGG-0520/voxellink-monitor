@@ -17,7 +17,8 @@ services:
   api:
     build: .
     command: ["api"]
-    env_file: .env
+    environment:
+      HTTP_ADDR: ${HTTP_ADDR:-:8080}
     depends_on:
       postgres:
         condition: service_healthy
@@ -28,7 +29,11 @@ services:
   worker:
     build: .
     command: ["worker"]
-    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      MONITOR_INTERVAL: ${MONITOR_INTERVAL:-60s}
+      STATUS_TIMEOUT: ${STATUS_TIMEOUT:-5s}
+      FAILURE_RETRY_INTERVAL: ${FAILURE_RETRY_INTERVAL:-10s}
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,7 +42,9 @@ services:
   bot:
     build: .
     command: ["bot"]
-    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,4 +52,3 @@ services:
 
 volumes:
   postgres-data:
-

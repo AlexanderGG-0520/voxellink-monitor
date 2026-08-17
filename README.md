@@ -25,5 +25,6 @@ The API health endpoint is `GET /healthz`. The development-only Java protocol ch
 
 ## Current foundation
 
-The repository deliberately starts with the durable boundaries rather than a throwaway checker: Compose topology, PostgreSQL schema, Java STATUS protocol implementation, and the v1 incident confirmation state machine are implemented. OAuth, VoxelLink client, encrypted Tunnel credentials, persistent repositories, Discord Gateway adapter, aggregate jobs, and owner/status-page UI build on these explicit interfaces next.
+The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.
 
+Next: VoxelLink import and ownership verification, Discord Gateway notifications, encrypted Tunnel credentials, retention aggregation, and the OAuth-backed owner/status-page UI.
