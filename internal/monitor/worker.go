@@ -9,6 +9,7 @@ import (
 
 	"github.com/alexandergg-0520/voxellink-monitor/internal/domain"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/minecraft"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/transport"
 )
 
 type Repository interface {
@@ -17,6 +18,9 @@ type Repository interface {
 }
 type Notifier interface {
 	StateChanged(context.Context, domain.Server, domain.PublicStatus, domain.CheckResult) error
+}
+type TunnelProber interface {
+	Ping(context.Context, string, int, time.Duration) domain.CheckResult
 }
 type NoopNotifier struct{}
 
@@ -30,13 +34,17 @@ type Worker struct {
 	retryInterval     time.Duration
 	logger            *slog.Logger
 	notifier          Notifier
+	tunnel            TunnelProber
 }
 
-func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger, notifier Notifier) *Worker {
+func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger, notifier Notifier, tunnel TunnelProber) *Worker {
 	if notifier == nil {
 		notifier = NoopNotifier{}
 	}
-	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier}
+	if tunnel == nil {
+		tunnel = transport.NewAccessTunnel("", timeout)
+	}
+	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier, tunnel: tunnel}
 }
 func (w *Worker) Run(ctx context.Context) error {
 	w.runRetention(ctx)
@@ -86,7 +94,7 @@ func (w *Worker) check(ctx context.Context, server domain.Server) {
 	// A normal pass makes one observation. A service-facing failure gets two
 	// confirmation checks; an outage recovering gets its second confirmation.
 	for attempt := 0; attempt < 3; attempt++ {
-		result := w.probe(server)
+		result := w.probe(ctx, server)
 		changed, state, err := w.repository.RecordCheck(ctx, server, result)
 		if err != nil {
 			w.logger.Error("record check", "server_id", server.ID, "error", err)
@@ -118,12 +126,12 @@ func (w *Worker) check(ctx context.Context, server domain.Server) {
 	}
 }
 
-func (w *Worker) probe(server domain.Server) domain.CheckResult {
+func (w *Worker) probe(ctx context.Context, server domain.Server) domain.CheckResult {
 	switch server.Transport {
 	case "DIRECT", "CLOUDFLARE_SPECTRUM":
 		return minecraft.PingJava(server.Hostname, server.Port, w.timeout)
 	case "CLOUDFLARE_TUNNEL":
-		return domain.CheckResult{Outcome: domain.ProbeError, Detail: "cloudflared tunnel adapter is not configured", At: time.Now()}
+		return w.tunnel.Ping(ctx, server.Hostname, server.Port, w.timeout)
 	default:
 		return domain.CheckResult{Outcome: domain.ProbeError, Detail: fmt.Sprintf("unsupported transport %q", server.Transport), At: time.Now()}
 	}

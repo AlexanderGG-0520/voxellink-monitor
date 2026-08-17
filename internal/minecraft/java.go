@@ -20,9 +20,15 @@ type status struct {
 }
 
 func PingJava(host string, port int, timeout time.Duration) domain.CheckResult {
+	return PingJavaEndpoint(host, port, host, port, timeout)
+}
+
+// PingJavaEndpoint permits a TCP proxy endpoint while retaining the player-facing
+// hostname in the Minecraft handshake (used by Cloudflare Tunnel transport).
+func PingJavaEndpoint(endpointHost string, endpointPort int, handshakeHost string, handshakePort int, timeout time.Duration) domain.CheckResult {
 	now := time.Now()
 	result := domain.CheckResult{At: now}
-	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(port)), timeout)
+	c, err := net.DialTimeout("tcp", net.JoinHostPort(endpointHost, fmt.Sprint(endpointPort)), timeout)
 	if err != nil {
 		result.Outcome = domain.ConnectTimeout
 		result.Detail = err.Error()
@@ -30,12 +36,12 @@ func PingJava(host string, port int, timeout time.Duration) domain.CheckResult {
 	}
 	defer c.Close()
 	_ = c.SetDeadline(now.Add(timeout))
-	hostBytes := []byte(host)
+	hostBytes := []byte(handshakeHost)
 	packet := append([]byte{0x00, 0x00}, varInt(765)...)
 	packet = append(packet, varInt(len(hostBytes))...)
 	packet = append(packet, hostBytes...)
 	p := make([]byte, 2)
-	binary.BigEndian.PutUint16(p, uint16(port))
+	binary.BigEndian.PutUint16(p, uint16(handshakePort))
 	packet = append(packet, p...)
 	packet = append(packet, 0x01)
 	if _, err = c.Write(append(varInt(len(packet)), packet...)); err != nil {

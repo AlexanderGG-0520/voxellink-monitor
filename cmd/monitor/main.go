@@ -15,6 +15,7 @@ import (
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration/voxellink"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/monitor"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/store"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/transport"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/web"
 )
 
@@ -67,7 +68,8 @@ func worker() {
 			log.Fatal(err)
 		}
 	}
-	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default(), notifier)
+	tunnel := transport.NewAccessTunnel(env("CLOUDFLARED_BIN", "/usr/local/bin/cloudflared"), durationEnv("CLOUDFLARED_STARTUP_TIMEOUT", 10*time.Second))
+	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default(), notifier, tunnel)
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}

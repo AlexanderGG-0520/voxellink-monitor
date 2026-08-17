@@ -43,6 +43,10 @@ services:
       STATUS_TIMEOUT: ${STATUS_TIMEOUT:-5s}
       FAILURE_RETRY_INTERVAL: ${FAILURE_RETRY_INTERVAL:-10s}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      CLOUDFLARED_BIN: ${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}
+      CLOUDFLARED_STARTUP_TIMEOUT: ${CLOUDFLARED_STARTUP_TIMEOUT:-10s}
+    volumes:
+      - ${CLOUDFLARED_CONFIG_DIR:-./cloudflared}:/home/nonroot/.cloudflared:ro
     depends_on:
       postgres:
         condition: service_healthy

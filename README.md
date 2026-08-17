@@ -40,6 +40,12 @@ The Worker rolls observations up on startup and every six hours before applying 
 
 Each aggregate stores check counts, successful checks, maintenance-excluded checks, and latency statistics. Retention is idempotent, so a restart cannot discard a lower-resolution record before its replacement aggregate exists.
 
+## Cloudflare Tunnel
+
+`CLOUDFLARE_TUNNEL` uses `cloudflared access tcp` to create a short-lived loopback TCP listener, then sends the Minecraft STATUS Ping through that listener while retaining the public hostname in the protocol handshake. The Worker image contains pinned `cloudflared` `2026.7.3` and mounts `${CLOUDFLARED_CONFIG_DIR:-./cloudflared}` read-only at its cloudflared configuration directory. Keep the Access login or service-credential material only in that untracked host directory; it is never written to PostgreSQL or returned by Monitor APIs.
+
+If cloudflared cannot authenticate, start, or create its listener, Monitor reports `UNKNOWN`, never `OUTAGE`. Cloudflare documents `cloudflared access tcp` as the client-side route for arbitrary TCP and recommends service tokens for unattended automation. [Cloudflare CLI guide](https://developers.cloudflare.com/cloudflare-one/tutorials/cli/) · [service-token guide](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
+
 ## Current foundation
 
 The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.
