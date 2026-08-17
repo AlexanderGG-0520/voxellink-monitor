@@ -132,11 +132,47 @@ func (s *Postgres) NotificationChannelIDs(ctx context.Context, serverID string) 
 }
 
 func (s *Postgres) SnapshotByExternalID(ctx context.Context, externalID string) (domain.ServerSnapshot, error) {
+	return s.snapshot(ctx, `WHERE s.external_source = 'voxellink' AND s.external_server_id = $1`, externalID)
+}
+
+func (s *Postgres) SnapshotByID(ctx context.Context, serverID string) (domain.ServerSnapshot, error) {
+	return s.snapshot(ctx, `WHERE s.id = $1::uuid`, serverID)
+}
+
+func (s *Postgres) PublicSnapshots(ctx context.Context) ([]domain.ServerSnapshot, error) {
+	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.enabled ORDER BY s.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var snapshots []domain.ServerSnapshot
+	for rows.Next() {
+		snapshot, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, rows.Err()
+}
+
+func (s *Postgres) snapshot(ctx context.Context, clause string, argument string) (domain.ServerSnapshot, error) {
 	var snapshot domain.ServerSnapshot
+	row := s.pool.QueryRow(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true `+clause, argument)
+	return scanSnapshot(row, &snapshot)
+}
+
+type snapshotScanner interface{ Scan(...any) error }
+
+func scanSnapshot(scanner snapshotScanner, targets ...*domain.ServerSnapshot) (domain.ServerSnapshot, error) {
+	snapshot := domain.ServerSnapshot{}
+	if len(targets) > 0 {
+		snapshot = *targets[0]
+	}
 	var checkedAt *time.Time
 	var outcome *string
 	var latency *int
-	err := s.pool.QueryRow(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.external_source = 'voxellink' AND s.external_server_id = $1`, externalID).Scan(&snapshot.ID, &snapshot.Name, &snapshot.Hostname, &snapshot.Port, &snapshot.Status, &snapshot.Transport, &snapshot.Enabled, &checkedAt, &outcome, &latency)
+	err := scanner.Scan(&snapshot.ID, &snapshot.Name, &snapshot.Hostname, &snapshot.Port, &snapshot.Status, &snapshot.Transport, &snapshot.Enabled, &checkedAt, &outcome, &latency)
 	if err != nil {
 		return domain.ServerSnapshot{}, err
 	}

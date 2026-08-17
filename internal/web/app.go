@@ -24,6 +24,10 @@ const sessionCookie = "voxellink_monitor_session"
 
 type Repository interface {
 	ServersForDiscordMember(context.Context, string) ([]domain.Server, error)
+	SnapshotByID(context.Context, string) (domain.ServerSnapshot, error)
+	PublicSnapshots(context.Context) ([]domain.ServerSnapshot, error)
+	Uptime24h(context.Context, string) (float64, error)
+	RecentIncidents(context.Context, string, int) ([]domain.Incident, error)
 	SetEnabledForDiscordMember(context.Context, string, string, bool) error
 	SetNotificationChannelForDiscordMember(context.Context, string, string, string) error
 	ScheduleMaintenanceForDiscordMember(context.Context, string, string, time.Time, time.Time) error
@@ -39,6 +43,11 @@ type App struct {
 	mu         sync.Mutex
 }
 type Config struct{ ClientID, ClientSecret, PublicBaseURL, SessionSecret, IntegrationToken string }
+type ConsoleServer struct {
+	Snapshot  domain.ServerSnapshot
+	Uptime24h float64
+	Incidents []domain.Incident
+}
 
 func New(repository Repository, importer Importer, config Config) (*App, error) {
 	if config.ClientID == "" || config.ClientSecret == "" || config.PublicBaseURL == "" || len(config.SessionSecret) < 24 || len(config.IntegrationToken) < 16 {
@@ -63,8 +72,12 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	user, _ := a.user(r)
-	render(w, homeTemplate, struct{ User string }{User: user})
+	servers, err := a.repository.PublicSnapshots(r.Context())
+	if err != nil {
+		http.Error(w, "could not load status", 500)
+		return
+	}
+	render(w, homeTemplate, struct{ Servers []domain.ServerSnapshot }{servers})
 }
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomToken()
@@ -114,7 +127,26 @@ func (a *App) console(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load servers", 500)
 		return
 	}
-	render(w, consoleTemplate, struct{ Servers []domain.Server }{servers})
+	view := make([]ConsoleServer, 0, len(servers))
+	for _, server := range servers {
+		snapshot, err := a.repository.SnapshotByID(r.Context(), server.ID)
+		if err != nil {
+			http.Error(w, "could not load server details", 500)
+			return
+		}
+		uptime, err := a.repository.Uptime24h(r.Context(), server.ID)
+		if err != nil {
+			http.Error(w, "could not load uptime", 500)
+			return
+		}
+		incidents, err := a.repository.RecentIncidents(r.Context(), server.ID, 3)
+		if err != nil {
+			http.Error(w, "could not load incidents", 500)
+			return
+		}
+		view = append(view, ConsoleServer{Snapshot: snapshot, Uptime24h: uptime, Incidents: incidents})
+	}
+	render(w, consoleTemplate, struct{ Servers []ConsoleServer }{view})
 }
 func (a *App) updateServer(w http.ResponseWriter, r *http.Request) {
 	userID, ok := a.user(r)
@@ -299,5 +331,5 @@ func render(w http.ResponseWriter, source string, data any) {
 	}
 }
 
-const homeTemplate = `<!doctype html><title>VoxelLink Monitor</title><main><h1>VoxelLink Monitor</h1><p>Minecraft server availability, independently observed.</p><a href="/login">Discordで管理画面へログイン</a></main>`
-const consoleTemplate = `<!doctype html><title>VoxelLink Monitor Console</title><main><h1>あなたの監視サーバー</h1>{{if .Servers}}{{range .Servers}}<section><h2>{{.Name}}</h2><p>{{.Status}} · {{.Hostname}}:{{.Port}} · {{.Transport}}</p><form method="post" action="/console/servers/{{.ID}}/enabled"><input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}"><button>{{if .Enabled}}監視を無効化{{else}}監視を有効化{{end}}</button></form><form method="post" action="/console/servers/{{.ID}}/channel"><label>Discord ステータスチャンネルID <input name="channel_id" required></label><button>通知先を保存</button></form><form method="post" action="/console/servers/{{.ID}}/maintenance"><label>メンテ開始（JST）<input type="datetime-local" name="starts_at" required></label><label>終了（JST）<input type="datetime-local" name="ends_at" required></label><button>メンテナンスを予定</button></form></section>{{end}}{{else}}<p>管理できるVoxelLink掲載サーバーはまだありません。</p>{{end}}</main>`
+const homeTemplate = `<!doctype html><meta charset="utf-8"><title>VoxelLink Monitor</title><style>body{font:16px system-ui;background:#10131a;color:#eef2ff;margin:auto;max-width:760px;padding:32px}a,button{color:#9ed0ff}section{background:#1b2230;padding:16px;margin:12px 0;border-radius:10px}.status{font-weight:bold}</style><main><h1>VoxelLink Monitor</h1><p>Minecraft server availability, independently observed.</p>{{if .Servers}}{{range .Servers}}<section><strong>{{.Name}}</strong><p class="status">{{.Status}}{{if .LastOutcome}} · 最終確認 {{.LastCheckedAt}}{{end}}</p></section>{{end}}{{else}}<p>現在、公開中の監視対象はありません。</p>{{end}}<p><a href="/login">Discordで管理画面へログイン</a></p></main>`
+const consoleTemplate = `<!doctype html><meta charset="utf-8"><title>VoxelLink Monitor Console</title><style>body{font:16px system-ui;background:#10131a;color:#eef2ff;margin:auto;max-width:900px;padding:32px}section{background:#1b2230;padding:18px;margin:16px 0;border-radius:10px}form{margin:10px 0}input,button{padding:7px;margin:3px}.grid{display:flex;gap:20px;flex-wrap:wrap}.status{font-weight:bold}</style><main><h1>あなたの監視サーバー</h1>{{if .Servers}}{{range .Servers}}<section><h2>{{.Snapshot.Name}}</h2><p class="status">{{.Snapshot.Status}} · {{.Snapshot.Hostname}}:{{.Snapshot.Port}} · {{.Snapshot.Transport}}</p><div class="grid"><span>直近24時間: <strong>{{printf "%.2f" .Uptime24h}}%</strong></span>{{if .Snapshot.LastOutcome}}<span>最終確認: {{.Snapshot.LastCheckedAt}}{{if .Snapshot.Latency}} / {{.Snapshot.Latency.Milliseconds}}ms{{end}}</span>{{end}}</div><h3>直近Incident</h3>{{if .Incidents}}<ul>{{range .Incidents}}<li>{{.StartedAt}} — {{.State}}（{{.Reason}}）</li>{{end}}</ul>{{else}}<p>Incidentはありません。</p>{{end}}<form method="post" action="/console/servers/{{.Snapshot.ID}}/enabled"><input type="hidden" name="enabled" value="{{if .Snapshot.Enabled}}false{{else}}true{{end}}"><button>{{if .Snapshot.Enabled}}監視を無効化{{else}}監視を有効化{{end}}</button></form><form method="post" action="/console/servers/{{.Snapshot.ID}}/channel"><label>Discord ステータスチャンネルID <input name="channel_id" required></label><button>通知先を保存</button></form><form method="post" action="/console/servers/{{.Snapshot.ID}}/maintenance"><label>メンテ開始（JST）<input type="datetime-local" name="starts_at" required></label><label>終了（JST）<input type="datetime-local" name="ends_at" required></label><button>メンテナンスを予定</button></form></section>{{end}}{{else}}<p>管理できるVoxelLink掲載サーバーはまだありません。</p>{{end}}</main>`

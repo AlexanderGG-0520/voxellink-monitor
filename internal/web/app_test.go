@@ -25,6 +25,16 @@ func (fakeRepository) SetNotificationChannelForDiscordMember(context.Context, st
 func (fakeRepository) ScheduleMaintenanceForDiscordMember(context.Context, string, string, time.Time, time.Time) error {
 	return nil
 }
+func (f fakeRepository) SnapshotByID(context.Context, string) (domain.ServerSnapshot, error) {
+	return domain.ServerSnapshot{Server: f.servers[0]}, nil
+}
+func (f fakeRepository) PublicSnapshots(context.Context) ([]domain.ServerSnapshot, error) {
+	return []domain.ServerSnapshot{{Server: f.servers[0]}}, nil
+}
+func (fakeRepository) Uptime24h(context.Context, string) (float64, error) { return 100, nil }
+func (fakeRepository) RecentIncidents(context.Context, string, int) ([]domain.Incident, error) {
+	return nil, nil
+}
 
 type fakeImporter struct{}
 
