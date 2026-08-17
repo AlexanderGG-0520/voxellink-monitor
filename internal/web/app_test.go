@@ -22,6 +22,9 @@ func (fakeRepository) SetEnabledForDiscordMember(context.Context, string, string
 func (fakeRepository) SetNotificationChannelForDiscordMember(context.Context, string, string, string) error {
 	return nil
 }
+func (fakeRepository) ScheduleMaintenanceForDiscordMember(context.Context, string, string, time.Time, time.Time) error {
+	return nil
+}
 
 type fakeImporter struct{}
 

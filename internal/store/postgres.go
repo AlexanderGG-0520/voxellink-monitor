@@ -55,7 +55,7 @@ func (s *Postgres) UpsertVoxelLinkServer(ctx context.Context, imported domain.Im
 }
 
 func (s *Postgres) EnabledServers(ctx context.Context) ([]domain.Server, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, name, hostname, port, status::text, transport::text, enabled FROM monitored_servers WHERE enabled ORDER BY created_at`)
+	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled FROM monitored_servers s WHERE s.enabled ORDER BY s.created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list enabled servers: %w", err)
 	}
@@ -93,7 +93,7 @@ func (s *Postgres) SnapshotByExternalID(ctx context.Context, externalID string) 
 	var checkedAt *time.Time
 	var outcome *string
 	var latency *int
-	err := s.pool.QueryRow(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, s.status::text, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.external_source = 'voxellink' AND s.external_server_id = $1`, externalID).Scan(&snapshot.ID, &snapshot.Name, &snapshot.Hostname, &snapshot.Port, &snapshot.Status, &snapshot.Transport, &snapshot.Enabled, &checkedAt, &outcome, &latency)
+	err := s.pool.QueryRow(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.external_source = 'voxellink' AND s.external_server_id = $1`, externalID).Scan(&snapshot.ID, &snapshot.Name, &snapshot.Hostname, &snapshot.Port, &snapshot.Status, &snapshot.Transport, &snapshot.Enabled, &checkedAt, &outcome, &latency)
 	if err != nil {
 		return domain.ServerSnapshot{}, err
 	}
@@ -111,7 +111,7 @@ func (s *Postgres) SnapshotByExternalID(ctx context.Context, externalID string) 
 
 func (s *Postgres) Uptime24h(ctx context.Context, serverID string) (float64, error) {
 	var percentage *float64
-	err := s.pool.QueryRow(ctx, `SELECT 100.0 * count(*) FILTER (WHERE outcome = 'SUCCESS') / NULLIF(count(*) FILTER (WHERE outcome <> 'PROBE_ERROR'), 0) FROM checks WHERE server_id = $1::uuid AND checked_at >= now() - interval '24 hours'`, serverID).Scan(&percentage)
+	err := s.pool.QueryRow(ctx, `SELECT 100.0 * count(*) FILTER (WHERE c.outcome = 'SUCCESS' AND NOT EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = c.server_id AND c.checked_at >= mw.starts_at AND c.checked_at < mw.ends_at)) / NULLIF(count(*) FILTER (WHERE c.outcome <> 'PROBE_ERROR' AND NOT EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = c.server_id AND c.checked_at >= mw.starts_at AND c.checked_at < mw.ends_at)), 0) FROM checks c WHERE c.server_id = $1::uuid AND c.checked_at >= now() - interval '24 hours'`, serverID).Scan(&percentage)
 	if err != nil {
 		return 0, err
 	}
@@ -139,7 +139,7 @@ func (s *Postgres) RecentIncidents(ctx context.Context, serverID string, limit i
 }
 
 func (s *Postgres) ServersForDiscordMember(ctx context.Context, discordUserID string) ([]domain.Server, error) {
-	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, s.status::text, s.transport::text, s.enabled FROM monitored_servers s JOIN server_members m ON m.server_id = s.id WHERE m.discord_user_id = $1 AND m.role IN ('owner', 'manager') ORDER BY s.name`, discordUserID)
+	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled FROM monitored_servers s JOIN server_members m ON m.server_id = s.id WHERE m.discord_user_id = $1 AND m.role IN ('owner', 'manager') ORDER BY s.name`, discordUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +168,17 @@ func (s *Postgres) SetEnabledForDiscordMember(ctx context.Context, serverID, dis
 
 func (s *Postgres) SetNotificationChannelForDiscordMember(ctx context.Context, serverID, discordUserID, channelID string) error {
 	command, err := s.pool.Exec(ctx, `INSERT INTO discord_notification_channels (server_id, channel_id) SELECT s.id, $3 FROM monitored_servers s WHERE s.id = $1::uuid AND EXISTS (SELECT 1 FROM server_members WHERE server_id = s.id AND discord_user_id = $2 AND role IN ('owner', 'manager')) ON CONFLICT (server_id) DO UPDATE SET channel_id = EXCLUDED.channel_id, enabled = true, updated_at = now()`, serverID, discordUserID, channelID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Postgres) ScheduleMaintenanceForDiscordMember(ctx context.Context, serverID, discordUserID string, startsAt, endsAt time.Time) error {
+	command, err := s.pool.Exec(ctx, `INSERT INTO maintenance_windows (server_id, starts_at, ends_at, created_by_discord_user_id) SELECT s.id, $3, $4, $2 FROM monitored_servers s WHERE s.id = $1::uuid AND EXISTS (SELECT 1 FROM server_members WHERE server_id = s.id AND discord_user_id = $2 AND role IN ('owner', 'manager'))`, serverID, discordUserID, startsAt, endsAt)
 	if err != nil {
 		return err
 	}

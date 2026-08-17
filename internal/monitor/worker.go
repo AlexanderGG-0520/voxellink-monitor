@@ -81,6 +81,9 @@ func (w *Worker) check(ctx context.Context, server domain.Server) {
 				w.logger.Error("send status notification", "server_id", server.ID, "error", err)
 			}
 		}
+		if state == domain.Maintenance {
+			return
+		}
 		previousState := server.Status
 		server.Status = state
 		if result.Outcome == domain.ProbeError || result.Outcome == domain.Success && previousState != domain.Outage {

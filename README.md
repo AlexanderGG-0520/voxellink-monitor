@@ -27,6 +27,8 @@ To enable Discord, set `DISCORD_BOT_TOKEN` and invite the application with `appl
 
 The web console is served by the `api` service. Configure a Discord OAuth2 application with the redirect URI `${PUBLIC_BASE_URL}/oauth/discord/callback`, then set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and a long random `SESSION_SECRET`. After Discord login, the console reads the locally synchronized VoxelLink membership snapshot and permits only `owner` and `manager` members to change monitoring or a status-channel ID.
 
+Maintenance windows are entered in the console as JST start and end times. The Worker continues collecting observations during the window, but exposes `MAINTENANCE` and excludes those observations from Incident opening, notifications, and uptime calculations.
+
 ## Current foundation
 
 The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.

@@ -26,6 +26,7 @@ type Repository interface {
 	ServersForDiscordMember(context.Context, string) ([]domain.Server, error)
 	SetEnabledForDiscordMember(context.Context, string, string, bool) error
 	SetNotificationChannelForDiscordMember(context.Context, string, string, string) error
+	ScheduleMaintenanceForDiscordMember(context.Context, string, string, time.Time, time.Time) error
 }
 type Importer interface {
 	Import(context.Context, string) (domain.Server, error)
@@ -146,6 +147,14 @@ func (a *App) updateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = a.repository.SetNotificationChannelForDiscordMember(r.Context(), parts[0], userID, channel)
+	case "maintenance":
+		start, startErr := time.ParseInLocation("2006-01-02T15:04", r.Form.Get("starts_at"), time.FixedZone("JST", 9*60*60))
+		end, endErr := time.ParseInLocation("2006-01-02T15:04", r.Form.Get("ends_at"), time.FixedZone("JST", 9*60*60))
+		if startErr != nil || endErr != nil || !end.After(start) {
+			http.Error(w, "有効な開始・終了時刻をJSTで指定してください", http.StatusBadRequest)
+			return
+		}
+		err = a.repository.ScheduleMaintenanceForDiscordMember(r.Context(), parts[0], userID, start.UTC(), end.UTC())
 	default:
 		http.NotFound(w, r)
 		return
@@ -291,4 +300,4 @@ func render(w http.ResponseWriter, source string, data any) {
 }
 
 const homeTemplate = `<!doctype html><title>VoxelLink Monitor</title><main><h1>VoxelLink Monitor</h1><p>Minecraft server availability, independently observed.</p><a href="/login">Discordで管理画面へログイン</a></main>`
-const consoleTemplate = `<!doctype html><title>VoxelLink Monitor Console</title><main><h1>あなたの監視サーバー</h1>{{if .Servers}}{{range .Servers}}<section><h2>{{.Name}}</h2><p>{{.Status}} · {{.Hostname}}:{{.Port}} · {{.Transport}}</p><form method="post" action="/console/servers/{{.ID}}/enabled"><input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}"><button>{{if .Enabled}}監視を無効化{{else}}監視を有効化{{end}}</button></form><form method="post" action="/console/servers/{{.ID}}/channel"><label>Discord ステータスチャンネルID <input name="channel_id" required></label><button>通知先を保存</button></form></section>{{end}}{{else}}<p>管理できるVoxelLink掲載サーバーはまだありません。</p>{{end}}</main>`
+const consoleTemplate = `<!doctype html><title>VoxelLink Monitor Console</title><main><h1>あなたの監視サーバー</h1>{{if .Servers}}{{range .Servers}}<section><h2>{{.Name}}</h2><p>{{.Status}} · {{.Hostname}}:{{.Port}} · {{.Transport}}</p><form method="post" action="/console/servers/{{.ID}}/enabled"><input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}"><button>{{if .Enabled}}監視を無効化{{else}}監視を有効化{{end}}</button></form><form method="post" action="/console/servers/{{.ID}}/channel"><label>Discord ステータスチャンネルID <input name="channel_id" required></label><button>通知先を保存</button></form><form method="post" action="/console/servers/{{.ID}}/maintenance"><label>メンテ開始（JST）<input type="datetime-local" name="starts_at" required></label><label>終了（JST）<input type="datetime-local" name="ends_at" required></label><button>メンテナンスを予定</button></form></section>{{end}}{{else}}<p>管理できるVoxelLink掲載サーバーはまだありません。</p>{{end}}</main>`
