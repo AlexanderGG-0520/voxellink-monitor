@@ -29,6 +29,17 @@ The web console is served by the `api` service. Configure a Discord OAuth2 appli
 
 Maintenance windows are entered in the console as JST start and end times. The Worker continues collecting observations during the window, but exposes `MAINTENANCE` and excludes those observations from Incident opening, notifications, and uptime calculations.
 
+## Data retention
+
+The Worker rolls observations up on startup and every six hours before applying the fixed v1 retention policy:
+
+- Raw STATUS checks: 30 days
+- 15-minute aggregates: 90 days
+- Hourly aggregates: one year
+- Daily uptime and Incidents: long-term
+
+Each aggregate stores check counts, successful checks, maintenance-excluded checks, and latency statistics. Retention is idempotent, so a restart cannot discard a lower-resolution record before its replacement aggregate exists.
+
 ## Current foundation
 
 The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.

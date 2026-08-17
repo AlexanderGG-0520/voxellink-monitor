@@ -39,11 +39,14 @@ func NewWorker(repository Repository, interval, timeout, retryInterval time.Dura
 	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier}
 }
 func (w *Worker) Run(ctx context.Context) error {
+	w.runRetention(ctx)
 	if err := w.RunOnce(ctx); err != nil {
 		w.logger.Error("initial monitor pass failed", "error", err)
 	}
 	ticker := time.NewTicker(w.interval)
+	retentionTicker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
+	defer retentionTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -52,7 +55,21 @@ func (w *Worker) Run(ctx context.Context) error {
 			if err := w.RunOnce(ctx); err != nil {
 				w.logger.Error("monitor pass failed", "error", err)
 			}
+		case <-retentionTicker.C:
+			w.runRetention(ctx)
 		}
+	}
+}
+func (w *Worker) runRetention(ctx context.Context) {
+	if repository, ok := w.repository.(interface {
+		RunRetention(context.Context) (domain.RetentionStats, error)
+	}); ok {
+		stats, err := repository.RunRetention(ctx)
+		if err != nil {
+			w.logger.Error("retention failed", "error", err)
+			return
+		}
+		w.logger.Info("retention complete", "raw_deleted", stats.RawDeleted, "15m_deleted", stats.FifteenMinuteDeleted, "hourly_deleted", stats.HourlyDeleted)
 	}
 }
 func (w *Worker) RunOnce(ctx context.Context) error {

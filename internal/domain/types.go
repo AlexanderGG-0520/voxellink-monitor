@@ -66,3 +66,5 @@ type Incident struct {
 	StartedAt, ConfirmedAt time.Time
 	ResolvedAt             *time.Time
 }
+
+type RetentionStats struct{ RawDeleted, FifteenMinuteDeleted, HourlyDeleted int64 }

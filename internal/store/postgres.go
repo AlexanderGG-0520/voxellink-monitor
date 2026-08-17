@@ -27,6 +27,49 @@ func Connect(ctx context.Context, url string) (*Postgres, error) {
 
 func (s *Postgres) Close() { s.pool.Close() }
 
+// RunRetention implements the fixed v1 policy. It is safe to run repeatedly:
+// rollups are upserts, then lower-resolution data is discarded only after it
+// has been represented at the next resolution.
+func (s *Postgres) RunRetention(ctx context.Context) (domain.RetentionStats, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.RetentionStats{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO check_aggregates_15m (server_id, bucket_start, checks_total, checks_successful, checks_excluded, latency_avg_ms, latency_max_ms) SELECT c.server_id, date_bin('15 minutes', c.checked_at, timestamptz '2000-01-01 00:00:00+00'), count(*), count(*) FILTER (WHERE c.outcome = 'SUCCESS'), count(*) FILTER (WHERE EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = c.server_id AND c.checked_at >= mw.starts_at AND c.checked_at < mw.ends_at)), round(avg(c.latency_ms) FILTER (WHERE c.outcome = 'SUCCESS'))::integer, max(c.latency_ms) FILTER (WHERE c.outcome = 'SUCCESS') FROM checks c WHERE c.checked_at < date_trunc('hour', now()) GROUP BY c.server_id, date_bin('15 minutes', c.checked_at, timestamptz '2000-01-01 00:00:00+00') ON CONFLICT (server_id, bucket_start) DO UPDATE SET checks_total = EXCLUDED.checks_total, checks_successful = EXCLUDED.checks_successful, checks_excluded = EXCLUDED.checks_excluded, latency_avg_ms = EXCLUDED.latency_avg_ms, latency_max_ms = EXCLUDED.latency_max_ms`)
+	if err != nil {
+		return domain.RetentionStats{}, fmt.Errorf("roll up 15-minute checks: %w", err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO check_aggregates_hourly (server_id, bucket_start, checks_total, checks_successful, checks_excluded, latency_avg_ms, latency_max_ms) SELECT server_id, date_trunc('hour', bucket_start), sum(checks_total), sum(checks_successful), sum(checks_excluded), round(sum(coalesce(latency_avg_ms, 0) * checks_successful)::numeric / nullif(sum(checks_successful), 0))::integer, max(latency_max_ms) FROM check_aggregates_15m WHERE bucket_start < date_trunc('hour', now()) GROUP BY server_id, date_trunc('hour', bucket_start) ON CONFLICT (server_id, bucket_start) DO UPDATE SET checks_total = EXCLUDED.checks_total, checks_successful = EXCLUDED.checks_successful, checks_excluded = EXCLUDED.checks_excluded, latency_avg_ms = EXCLUDED.latency_avg_ms, latency_max_ms = EXCLUDED.latency_max_ms`)
+	if err != nil {
+		return domain.RetentionStats{}, fmt.Errorf("roll up hourly checks: %w", err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO daily_uptime (server_id, day, checks_total, checks_successful, checks_excluded, uptime_percent) SELECT server_id, bucket_start::date, sum(checks_total), sum(checks_successful), sum(checks_excluded), round(100.0 * sum(checks_successful) / nullif(sum(checks_total) - sum(checks_excluded), 0), 2) FROM check_aggregates_hourly WHERE bucket_start < date_trunc('day', now()) GROUP BY server_id, bucket_start::date ON CONFLICT (server_id, day) DO UPDATE SET checks_total = EXCLUDED.checks_total, checks_successful = EXCLUDED.checks_successful, checks_excluded = EXCLUDED.checks_excluded, uptime_percent = EXCLUDED.uptime_percent`)
+	if err != nil {
+		return domain.RetentionStats{}, fmt.Errorf("roll up daily uptime: %w", err)
+	}
+	stats := domain.RetentionStats{}
+	command, err := tx.Exec(ctx, `DELETE FROM checks WHERE checked_at < now() - interval '30 days'`)
+	if err != nil {
+		return stats, err
+	}
+	stats.RawDeleted = command.RowsAffected()
+	command, err = tx.Exec(ctx, `DELETE FROM check_aggregates_15m WHERE bucket_start < now() - interval '90 days'`)
+	if err != nil {
+		return stats, err
+	}
+	stats.FifteenMinuteDeleted = command.RowsAffected()
+	command, err = tx.Exec(ctx, `DELETE FROM check_aggregates_hourly WHERE bucket_start < now() - interval '1 year'`)
+	if err != nil {
+		return stats, err
+	}
+	stats.HourlyDeleted = command.RowsAffected()
+	if err = tx.Commit(ctx); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
 // UpsertVoxelLinkServer replaces only imported listing metadata and membership.
 // Checks, public state, and incidents remain Monitor-owned data.
 func (s *Postgres) UpsertVoxelLinkServer(ctx context.Context, imported domain.ImportedServer) (domain.Server, error) {
