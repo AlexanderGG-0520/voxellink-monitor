@@ -48,9 +48,9 @@ Each aggregate stores check counts, successful checks, maintenance-excluded chec
 
 ## Cloudflare Tunnel
 
-`CLOUDFLARE_TUNNEL` uses `cloudflared access tcp` to create a short-lived loopback TCP listener, then sends the Minecraft STATUS Ping through that listener while retaining the public hostname in the protocol handshake. The Worker image contains pinned `cloudflared` `2026.7.3` and mounts `${CLOUDFLARED_CONFIG_DIR:-./cloudflared}` read-only at its cloudflared configuration directory. Keep the Access login or service-credential material only in that untracked host directory; it is never written to PostgreSQL or returned by Monitor APIs.
+`CLOUDFLARE_TUNNEL` uses the same client-side pattern as modflared: Monitor's own `cloudflared access tcp` creates a short-lived loopback TCP listener, then Monitor sends the Minecraft STATUS Ping through it while retaining the public hostname in the protocol handshake. The Worker image includes pinned `cloudflared` `2026.7.3`; the listing owner supplies only the public Tunnel hostname and port, never Cloudflare credentials.
 
-If cloudflared cannot authenticate, start, or create its listener, Monitor reports `UNKNOWN`, never `OUTAGE`. Cloudflare documents `cloudflared access tcp` as the client-side route for arbitrary TCP and recommends service tokens for unattended automation. [Cloudflare CLI guide](https://developers.cloudflare.com/cloudflare-one/tutorials/cli/) · [service-token guide](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
+This transport works for a Tunnel that accepts normal cloudflared clients. If a specific Cloudflare Access policy requires end-user authentication, Monitor reports `UNKNOWN` rather than using or requesting the listing owner's credentials. [Modflared project](https://www.curseforge.com/minecraft/mc-mods/modflared) · [Cloudflare CLI guide](https://developers.cloudflare.com/cloudflare-one/tutorials/cli/)
 
 ## Current foundation
 

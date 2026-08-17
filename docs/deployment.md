@@ -21,7 +21,7 @@ Register `${PUBLIC_BASE_URL}/oauth/discord/callback` as the Discord OAuth2 redir
 
 ## Cloudflare Tunnel targets
 
-For a monitored server using `CLOUDFLARE_TUNNEL`, provide its Cloudflare Access credential material in the host's `cloudflared/` directory (or set `CLOUDFLARED_CONFIG_DIR`). The Worker mounts it read-only. Use a service token protected by a Service Auth policy for unattended monitoring; do not put this material into VoxelLink Monitor's database or `.env`.
+For a monitored server using `CLOUDFLARE_TUNNEL`, no Cloudflare credential is configured in Monitor. The Worker runs its own client-side `cloudflared access tcp`, in the same way modflared lets a Minecraft client reach a Tunnel. The listing needs only its public Tunnel hostname and port. A Tunnel that requires an end-user Cloudflare Access login cannot be monitored this way and is reported as `UNKNOWN`; Monitor never requests or stores the listing owner's Access credential.
 
 ## Start and verify
 

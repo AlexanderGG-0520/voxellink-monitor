@@ -54,8 +54,6 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       CLOUDFLARED_BIN: ${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}
       CLOUDFLARED_STARTUP_TIMEOUT: ${CLOUDFLARED_STARTUP_TIMEOUT:-10s}
-    volumes:
-      - ${CLOUDFLARED_CONFIG_DIR:-./cloudflared}:/home/nonroot/.cloudflared:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
