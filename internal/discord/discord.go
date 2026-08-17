@@ -15,6 +15,7 @@ type ChannelRepository interface {
 }
 type QueryRepository interface {
 	SnapshotByExternalID(context.Context, string) (domain.ServerSnapshot, error)
+	SnapshotByDiscordChannel(context.Context, string) (domain.ServerSnapshot, error)
 	Uptime24h(context.Context, string) (float64, error)
 	RecentIncidents(context.Context, string, int) ([]domain.Incident, error)
 }
@@ -45,16 +46,17 @@ func (n *Notifier) StateChanged(ctx context.Context, server domain.Server, state
 }
 
 type Bot struct {
-	session *discordgo.Session
-	queries QueryRepository
+	session    *discordgo.Session
+	queries    QueryRepository
+	consoleURL string
 }
 
-func NewBot(token string, queries QueryRepository) (*Bot, error) {
+func NewBot(token string, queries QueryRepository, consoleURL string) (*Bot, error) {
 	session, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
 	}
-	return &Bot{session: session, queries: queries}, nil
+	return &Bot{session: session, queries: queries, consoleURL: consoleURL}, nil
 }
 func (b *Bot) Run(ctx context.Context) error {
 	b.session.AddHandler(b.handleInteraction)
@@ -70,11 +72,12 @@ func (b *Bot) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 func commands() []*discordgo.ApplicationCommand {
-	serverOption := &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "server", Description: "VoxelLink server ID", Required: true}
+	serverOption := &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "server", Description: "VoxelLink server ID（ステータスチャンネル内では不要）", Required: false}
 	return []*discordgo.ApplicationCommand{
 		{Name: "status", Description: "Show the current player-facing server status", Options: []*discordgo.ApplicationCommandOption{serverOption}},
 		{Name: "uptime", Description: "Show availability over the last 24 hours", Options: []*discordgo.ApplicationCommandOption{serverOption}},
 		{Name: "incidents", Description: "Show recent incidents", Options: []*discordgo.ApplicationCommandOption{serverOption}},
+		{Name: "monitor", Description: "Open the server owner console"},
 	}
 }
 func (b *Bot) handleInteraction(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
@@ -82,8 +85,17 @@ func (b *Bot) handleInteraction(session *discordgo.Session, interaction *discord
 		return
 	}
 	data := interaction.ApplicationCommandData()
-	serverID := data.Options[0].StringValue()
-	snapshot, err := b.queries.SnapshotByExternalID(context.Background(), serverID)
+	if data.Name == "monitor" {
+		b.monitorLink(session, interaction)
+		return
+	}
+	var snapshot domain.ServerSnapshot
+	var err error
+	if len(data.Options) > 0 && data.Options[0].StringValue() != "" {
+		snapshot, err = b.queries.SnapshotByExternalID(context.Background(), data.Options[0].StringValue())
+	} else {
+		snapshot, err = b.queries.SnapshotByDiscordChannel(context.Background(), interaction.ChannelID)
+	}
 	if err != nil {
 		respond(session, interaction, "そのVoxelLink掲載サーバーは見つかりません。", true)
 		return
@@ -110,6 +122,13 @@ func (b *Bot) handleInteraction(session *discordgo.Session, interaction *discord
 		return
 	}
 	respond(session, interaction, content, false)
+}
+func (b *Bot) monitorLink(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+	if b.consoleURL == "" {
+		respond(session, interaction, "管理画面URLが設定されていません。", true)
+		return
+	}
+	_ = session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseChannelMessageWithSource, Data: &discordgo.InteractionResponseData{Content: "監視設定はWeb管理画面から変更できます。", Flags: discordgo.MessageFlagsEphemeral, Components: []discordgo.MessageComponent{discordgo.Button{Label: "管理画面を開く", Style: discordgo.LinkButton, URL: b.consoleURL + "/console"}}}})
 }
 func respond(session *discordgo.Session, interaction *discordgo.InteractionCreate, content string, ephemeral bool) {
 	flags := discordgo.MessageFlags(0)

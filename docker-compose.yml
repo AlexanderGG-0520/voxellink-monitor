@@ -65,6 +65,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

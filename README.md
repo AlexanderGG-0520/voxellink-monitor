@@ -27,7 +27,7 @@ For a production deployment, follow [docs/deployment.md](docs/deployment.md). Gi
 
 The API health endpoint is `GET /healthz`. Monitoring targets are imported only from VoxelLink through the trusted integration endpoint; arbitrary-host probing is intentionally unavailable.
 
-To enable Discord, set `DISCORD_BOT_TOKEN` and invite the application with `applications.commands` and bot permissions to send messages in each server's status channel. The bot registers player-facing `/status`, `/uptime`, and `/incidents` commands; their `server` option is the VoxelLink server ID until the owner console provides a friendly server picker. The Worker sends only state-change notices to the configured per-server channels.
+To enable Discord, set `DISCORD_BOT_TOKEN` and invite the application with `applications.commands` and bot permissions to send messages in each server's status channel. The bot registers player-facing `/status`, `/uptime`, and `/incidents` commands; in a configured server status channel, they resolve that server automatically, while the optional `server` value works elsewhere. `/monitor` returns an ephemeral link to the owner console. The Worker sends only state-change notices to the configured per-server channels.
 
 The web console is served by the `api` service. Configure a Discord OAuth2 application with the redirect URI `${PUBLIC_BASE_URL}/oauth/discord/callback`, then set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and a long random `SESSION_SECRET`. After Discord login, the console reads the locally synchronized VoxelLink membership snapshot and permits only `owner` and `manager` members to change monitoring or a status-channel ID.
 

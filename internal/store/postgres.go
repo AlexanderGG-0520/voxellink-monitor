@@ -139,6 +139,10 @@ func (s *Postgres) SnapshotByID(ctx context.Context, serverID string) (domain.Se
 	return s.snapshot(ctx, `WHERE s.id = $1::uuid`, serverID)
 }
 
+func (s *Postgres) SnapshotByDiscordChannel(ctx context.Context, channelID string) (domain.ServerSnapshot, error) {
+	return s.snapshot(ctx, `JOIN discord_notification_channels dnc ON dnc.server_id = s.id WHERE dnc.channel_id = $1 AND dnc.enabled`, channelID)
+}
+
 func (s *Postgres) PublicSnapshots(ctx context.Context) ([]domain.ServerSnapshot, error) {
 	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.enabled ORDER BY s.name`)
 	if err != nil {

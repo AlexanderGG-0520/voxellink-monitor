@@ -97,7 +97,7 @@ func bot() {
 		log.Fatal(err)
 	}
 	defer repository.Close()
-	instance, err := monitorDiscord.NewBot(requiredEnv("DISCORD_BOT_TOKEN"), repository)
+	instance, err := monitorDiscord.NewBot(requiredEnv("DISCORD_BOT_TOKEN"), repository, env("PUBLIC_BASE_URL", ""))
 	if err != nil {
 		log.Fatal(err)
 	}
