@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/json"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +15,7 @@ import (
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration/voxellink"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/monitor"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/store"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/web"
 )
 
 func main() {
@@ -48,41 +46,11 @@ func api() {
 		log.Fatal(err)
 	}
 	importer := integration.NewImporter(client, repository)
-	syncToken := requiredEnv("INTEGRATION_SYNC_TOKEN")
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("/api/v1/integrations/voxellink/import", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authorized(r, syncToken) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		defer r.Body.Close()
-		var request struct {
-			ExternalServerID string `json:"external_server_id"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		server, err := importer.Import(r.Context(), request.ExternalServerID)
-		if err != nil {
-			slog.Default().Warn("VoxelLink import failed", "error", err)
-			http.Error(w, "VoxelLink import failed", http.StatusBadGateway)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(server)
-	})
-	log.Fatal(http.ListenAndServe(env("HTTP_ADDR", ":8080"), mux))
-}
-func authorized(request *http.Request, token string) bool {
-	value := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
-	return len(value) == len(token) && subtle.ConstantTimeCompare([]byte(value), []byte(token)) == 1
+	app, err := web.New(repository, importer, web.Config{ClientID: requiredEnv("DISCORD_CLIENT_ID"), ClientSecret: requiredEnv("DISCORD_CLIENT_SECRET"), PublicBaseURL: requiredEnv("PUBLIC_BASE_URL"), SessionSecret: requiredEnv("SESSION_SECRET"), IntegrationToken: requiredEnv("INTEGRATION_SYNC_TOKEN")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(http.ListenAndServe(env("HTTP_ADDR", ":8080"), app.Handler()))
 }
 func worker() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

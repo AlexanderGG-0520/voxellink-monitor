@@ -138,6 +138,45 @@ func (s *Postgres) RecentIncidents(ctx context.Context, serverID string, limit i
 	return incidents, rows.Err()
 }
 
+func (s *Postgres) ServersForDiscordMember(ctx context.Context, discordUserID string) ([]domain.Server, error) {
+	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, s.status::text, s.transport::text, s.enabled FROM monitored_servers s JOIN server_members m ON m.server_id = s.id WHERE m.discord_user_id = $1 AND m.role IN ('owner', 'manager') ORDER BY s.name`, discordUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var servers []domain.Server
+	for rows.Next() {
+		var server domain.Server
+		if err := rows.Scan(&server.ID, &server.Name, &server.Hostname, &server.Port, &server.Status, &server.Transport, &server.Enabled); err != nil {
+			return nil, err
+		}
+		servers = append(servers, server)
+	}
+	return servers, rows.Err()
+}
+
+func (s *Postgres) SetEnabledForDiscordMember(ctx context.Context, serverID, discordUserID string, enabled bool) error {
+	command, err := s.pool.Exec(ctx, `UPDATE monitored_servers SET enabled = $3, updated_at = now() WHERE id = $1::uuid AND EXISTS (SELECT 1 FROM server_members WHERE server_id = monitored_servers.id AND discord_user_id = $2 AND role IN ('owner', 'manager'))`, serverID, discordUserID, enabled)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Postgres) SetNotificationChannelForDiscordMember(ctx context.Context, serverID, discordUserID, channelID string) error {
+	command, err := s.pool.Exec(ctx, `INSERT INTO discord_notification_channels (server_id, channel_id) SELECT s.id, $3 FROM monitored_servers s WHERE s.id = $1::uuid AND EXISTS (SELECT 1 FROM server_members WHERE server_id = s.id AND discord_user_id = $2 AND role IN ('owner', 'manager')) ON CONFLICT (server_id) DO UPDATE SET channel_id = EXCLUDED.channel_id, enabled = true, updated_at = now()`, serverID, discordUserID, channelID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // RecordCheck persists one observation and applies the persisted v1 state policy.
 // It returns a state change so the notification layer can post exactly once.
 func (s *Postgres) RecordCheck(ctx context.Context, server domain.Server, result domain.CheckResult) (bool, domain.PublicStatus, error) {
