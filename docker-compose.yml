@@ -54,6 +54,8 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       CLOUDFLARED_BIN: ${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}
       CLOUDFLARED_STARTUP_TIMEOUT: ${CLOUDFLARED_STARTUP_TIMEOUT:-10s}
+      VOXELLINK_API_BASE_URL: ${VOXELLINK_API_BASE_URL:-}
+      VOXELLINK_API_TOKEN: ${VOXELLINK_API_TOKEN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

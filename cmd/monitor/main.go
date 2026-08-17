@@ -84,7 +84,15 @@ func worker() {
 		}
 	}
 	tunnel := transport.NewAccessTunnel(env("CLOUDFLARED_BIN", "/usr/local/bin/cloudflared"), durationEnv("CLOUDFLARED_STARTUP_TIMEOUT", 10*time.Second))
-	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default(), notifier, tunnel)
+	var synchronizer monitor.Synchronizer
+	if apiURL, token := os.Getenv("VOXELLINK_API_BASE_URL"), os.Getenv("VOXELLINK_API_TOKEN"); apiURL != "" && token != "" {
+		client, err := voxellink.New(apiURL, token)
+		if err != nil {
+			log.Fatal(err)
+		}
+		synchronizer = integration.NewSynchronizer(integration.NewImporter(client, repository), repository)
+	}
+	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default(), notifier, tunnel, synchronizer)
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}

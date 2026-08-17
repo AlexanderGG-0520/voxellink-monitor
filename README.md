@@ -33,6 +33,8 @@ The web console is served by the `api` service. Configure a Discord OAuth2 appli
 
 The public home page is the Network Status page: it lists each enabled monitored server with its current public state. The owner console adds its current endpoint, last check, latency, 24-hour availability, and three most recent Incidents.
 
+After import, the Worker refreshes VoxelLink listing metadata and verified memberships on startup and every six hours. A refresh failure only logs the error: existing endpoint configuration, checks, status pages, Incidents, and Discord notices continue from Monitor PostgreSQL.
+
 Maintenance windows are entered in the console as JST start and end times. The Worker continues collecting observations during the window, but exposes `MAINTENANCE` and excludes those observations from Incident opening, notifications, and uptime calculations.
 
 ## Data retention

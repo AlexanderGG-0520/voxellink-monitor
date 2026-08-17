@@ -97,6 +97,23 @@ func (s *Postgres) UpsertVoxelLinkServer(ctx context.Context, imported domain.Im
 	return server, nil
 }
 
+func (s *Postgres) VoxelLinkExternalServerIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT external_server_id FROM monitored_servers WHERE external_source = 'voxellink' ORDER BY external_server_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Postgres) EnabledServers(ctx context.Context) ([]domain.Server, error) {
 	rows, err := s.pool.Query(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, CASE WHEN EXISTS (SELECT 1 FROM maintenance_windows mw WHERE mw.server_id = s.id AND now() >= mw.starts_at AND now() < mw.ends_at) THEN 'MAINTENANCE' ELSE s.status::text END, s.transport::text, s.enabled FROM monitored_servers s WHERE s.enabled ORDER BY s.created_at`)
 	if err != nil {

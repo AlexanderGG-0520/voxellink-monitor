@@ -22,6 +22,7 @@ type Notifier interface {
 type TunnelProber interface {
 	Ping(context.Context, string, int, time.Duration) domain.CheckResult
 }
+type Synchronizer interface{ Sync(context.Context) error }
 type NoopNotifier struct{}
 
 func (NoopNotifier) StateChanged(context.Context, domain.Server, domain.PublicStatus, domain.CheckResult) error {
@@ -35,26 +36,30 @@ type Worker struct {
 	logger            *slog.Logger
 	notifier          Notifier
 	tunnel            TunnelProber
+	synchronizer      Synchronizer
 }
 
-func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger, notifier Notifier, tunnel TunnelProber) *Worker {
+func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger, notifier Notifier, tunnel TunnelProber, synchronizer Synchronizer) *Worker {
 	if notifier == nil {
 		notifier = NoopNotifier{}
 	}
 	if tunnel == nil {
 		tunnel = transport.NewAccessTunnel("", timeout)
 	}
-	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier, tunnel: tunnel}
+	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier, tunnel: tunnel, synchronizer: synchronizer}
 }
 func (w *Worker) Run(ctx context.Context) error {
 	w.runRetention(ctx)
+	w.syncVoxelLink(ctx)
 	if err := w.RunOnce(ctx); err != nil {
 		w.logger.Error("initial monitor pass failed", "error", err)
 	}
 	ticker := time.NewTicker(w.interval)
 	retentionTicker := time.NewTicker(6 * time.Hour)
+	syncTicker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	defer retentionTicker.Stop()
+	defer syncTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -65,8 +70,20 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		case <-retentionTicker.C:
 			w.runRetention(ctx)
+		case <-syncTicker.C:
+			w.syncVoxelLink(ctx)
 		}
 	}
+}
+func (w *Worker) syncVoxelLink(ctx context.Context) {
+	if w.synchronizer == nil {
+		return
+	}
+	if err := w.synchronizer.Sync(ctx); err != nil {
+		w.logger.Warn("VoxelLink sync failed; existing monitoring continues", "error", err)
+		return
+	}
+	w.logger.Info("VoxelLink metadata sync complete")
 }
 func (w *Worker) runRetention(ctx context.Context) {
 	if repository, ok := w.repository.(interface {
