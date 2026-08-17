@@ -52,3 +52,11 @@ CREATE TABLE server_members (
   source text NOT NULL DEFAULT 'voxellink',
   PRIMARY KEY (server_id, discord_user_id)
 );
+
+CREATE TABLE discord_notification_channels (
+  server_id uuid PRIMARY KEY REFERENCES monitored_servers(id) ON DELETE CASCADE,
+  channel_id text NOT NULL UNIQUE,
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

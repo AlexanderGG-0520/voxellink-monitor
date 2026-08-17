@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	monitorDiscord "github.com/alexandergg-0520/voxellink-monitor/internal/discord"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration/voxellink"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/monitor"
@@ -30,8 +31,7 @@ func main() {
 	case "worker":
 		worker()
 	case "bot":
-		log.Print("Discord bot foundation ready; configure DISCORD_BOT_TOKEN to enable gateway adapter")
-		select {}
+		bot()
 	default:
 		log.Fatalf("unknown role %q", role)
 	}
@@ -92,8 +92,31 @@ func worker() {
 		log.Fatal(err)
 	}
 	defer repository.Close()
-	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default())
+	var notifier monitor.Notifier
+	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {
+		notifier, err = monitorDiscord.NewNotifier(token, repository)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	w := monitor.NewWorker(repository, durationEnv("MONITOR_INTERVAL", time.Minute), durationEnv("STATUS_TIMEOUT", 5*time.Second), durationEnv("FAILURE_RETRY_INTERVAL", 10*time.Second), slog.Default(), notifier)
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
+		log.Fatal(err)
+	}
+}
+func bot() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	repository, err := store.Connect(ctx, requiredEnv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer repository.Close()
+	instance, err := monitorDiscord.NewBot(requiredEnv("DISCORD_BOT_TOKEN"), repository)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := instance.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}
 }

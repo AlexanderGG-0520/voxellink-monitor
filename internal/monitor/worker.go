@@ -15,15 +15,28 @@ type Repository interface {
 	EnabledServers(context.Context) ([]domain.Server, error)
 	RecordCheck(context.Context, domain.Server, domain.CheckResult) (bool, domain.PublicStatus, error)
 }
+type Notifier interface {
+	StateChanged(context.Context, domain.Server, domain.PublicStatus, domain.CheckResult) error
+}
+type NoopNotifier struct{}
+
+func (NoopNotifier) StateChanged(context.Context, domain.Server, domain.PublicStatus, domain.CheckResult) error {
+	return nil
+}
+
 type Worker struct {
 	repository        Repository
 	interval, timeout time.Duration
 	retryInterval     time.Duration
 	logger            *slog.Logger
+	notifier          Notifier
 }
 
-func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger) *Worker {
-	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger}
+func NewWorker(repository Repository, interval, timeout, retryInterval time.Duration, logger *slog.Logger, notifier Notifier) *Worker {
+	if notifier == nil {
+		notifier = NoopNotifier{}
+	}
+	return &Worker{repository: repository, interval: interval, timeout: timeout, retryInterval: retryInterval, logger: logger, notifier: notifier}
 }
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.RunOnce(ctx); err != nil {
@@ -63,6 +76,11 @@ func (w *Worker) check(ctx context.Context, server domain.Server) {
 			return
 		}
 		w.logger.Info("server checked", "server_id", server.ID, "outcome", result.Outcome, "changed", changed, "state", state, "attempt", attempt+1)
+		if changed {
+			if err := w.notifier.StateChanged(ctx, server, state, result); err != nil {
+				w.logger.Error("send status notification", "server_id", server.ID, "error", err)
+			}
+		}
 		previousState := server.Status
 		server.Status = state
 		if result.Outcome == domain.ProbeError || result.Outcome == domain.Success && previousState != domain.Outage {

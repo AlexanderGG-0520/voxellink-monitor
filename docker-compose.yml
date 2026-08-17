@@ -38,6 +38,7 @@ services:
       MONITOR_INTERVAL: ${MONITOR_INTERVAL:-60s}
       STATUS_TIMEOUT: ${STATUS_TIMEOUT:-5s}
       FAILURE_RETRY_INTERVAL: ${FAILURE_RETRY_INTERVAL:-10s}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -51,3 +51,18 @@ type ImportedServer struct {
 	Members    []ServerMember
 }
 type ServerMember struct{ DiscordUserID, Role string }
+
+type ServerSnapshot struct {
+	Server
+	LastCheckedAt time.Time
+	LastOutcome   Outcome
+	Latency       time.Duration
+}
+
+type Incident struct {
+	ID, ServerID           string
+	State                  string
+	Reason                 Outcome
+	StartedAt, ConfirmedAt time.Time
+	ResolvedAt             *time.Time
+}

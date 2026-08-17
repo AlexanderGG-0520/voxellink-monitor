@@ -23,6 +23,8 @@ docker compose up --build
 
 The API health endpoint is `GET /healthz`. Monitoring targets are imported only from VoxelLink through the trusted integration endpoint; arbitrary-host probing is intentionally unavailable.
 
+To enable Discord, set `DISCORD_BOT_TOKEN` and invite the application with `applications.commands` and bot permissions to send messages in each server's status channel. The bot registers player-facing `/status`, `/uptime`, and `/incidents` commands; their `server` option is the VoxelLink server ID until the owner console provides a friendly server picker. The Worker sends only state-change notices to the configured per-server channels.
+
 ## Current foundation
 
 The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.

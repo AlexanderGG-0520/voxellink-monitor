@@ -71,6 +71,73 @@ func (s *Postgres) EnabledServers(ctx context.Context) ([]domain.Server, error) 
 	return servers, rows.Err()
 }
 
+func (s *Postgres) NotificationChannelIDs(ctx context.Context, serverID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT channel_id FROM discord_notification_channels WHERE server_id = $1::uuid AND enabled`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Postgres) SnapshotByExternalID(ctx context.Context, externalID string) (domain.ServerSnapshot, error) {
+	var snapshot domain.ServerSnapshot
+	var checkedAt *time.Time
+	var outcome *string
+	var latency *int
+	err := s.pool.QueryRow(ctx, `SELECT s.id::text, s.name, s.hostname, s.port, s.status::text, s.transport::text, s.enabled, c.checked_at, c.outcome::text, c.latency_ms FROM monitored_servers s LEFT JOIN LATERAL (SELECT checked_at, outcome, latency_ms FROM checks WHERE server_id = s.id ORDER BY checked_at DESC, id DESC LIMIT 1) c ON true WHERE s.external_source = 'voxellink' AND s.external_server_id = $1`, externalID).Scan(&snapshot.ID, &snapshot.Name, &snapshot.Hostname, &snapshot.Port, &snapshot.Status, &snapshot.Transport, &snapshot.Enabled, &checkedAt, &outcome, &latency)
+	if err != nil {
+		return domain.ServerSnapshot{}, err
+	}
+	if checkedAt != nil {
+		snapshot.LastCheckedAt = *checkedAt
+	}
+	if outcome != nil {
+		snapshot.LastOutcome = domain.Outcome(*outcome)
+	}
+	if latency != nil {
+		snapshot.Latency = time.Duration(*latency) * time.Millisecond
+	}
+	return snapshot, nil
+}
+
+func (s *Postgres) Uptime24h(ctx context.Context, serverID string) (float64, error) {
+	var percentage *float64
+	err := s.pool.QueryRow(ctx, `SELECT 100.0 * count(*) FILTER (WHERE outcome = 'SUCCESS') / NULLIF(count(*) FILTER (WHERE outcome <> 'PROBE_ERROR'), 0) FROM checks WHERE server_id = $1::uuid AND checked_at >= now() - interval '24 hours'`, serverID).Scan(&percentage)
+	if err != nil {
+		return 0, err
+	}
+	if percentage == nil {
+		return 0, nil
+	}
+	return *percentage, nil
+}
+
+func (s *Postgres) RecentIncidents(ctx context.Context, serverID string, limit int) ([]domain.Incident, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text, server_id::text, state, reason::text, started_at, confirmed_at, resolved_at FROM incidents WHERE server_id = $1::uuid ORDER BY started_at DESC LIMIT $2`, serverID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var incidents []domain.Incident
+	for rows.Next() {
+		var incident domain.Incident
+		if err := rows.Scan(&incident.ID, &incident.ServerID, &incident.State, &incident.Reason, &incident.StartedAt, &incident.ConfirmedAt, &incident.ResolvedAt); err != nil {
+			return nil, err
+		}
+		incidents = append(incidents, incident)
+	}
+	return incidents, rows.Err()
+}
+
 // RecordCheck persists one observation and applies the persisted v1 state policy.
 // It returns a state change so the notification layer can post exactly once.
 func (s *Postgres) RecordCheck(ctx context.Context, server domain.Server, result domain.CheckResult) (bool, domain.PublicStatus, error) {
