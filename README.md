@@ -21,6 +21,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
+The `migrate` service applies each embedded SQL migration before `api`, `worker`, or `bot` starts. It records completed versions in `schema_migrations`; re-running Compose is safe. Deployments created with the earlier initialization-only layout are baselined automatically, then receive any missing later migration.
+
 The API health endpoint is `GET /healthz`. Monitoring targets are imported only from VoxelLink through the trusted integration endpoint; arbitrary-host probing is intentionally unavailable.
 
 To enable Discord, set `DISCORD_BOT_TOKEN` and invite the application with `applications.commands` and bot permissions to send messages in each server's status channel. The bot registers player-facing `/status`, `/uptime`, and `/incidents` commands; their `server` option is the VoxelLink server ID until the owner console provides a friendly server picker. The Worker sends only state-change notices to the configured per-server channels.

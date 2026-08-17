@@ -13,10 +13,12 @@ import (
 	monitorDiscord "github.com/alexandergg-0520/voxellink-monitor/internal/discord"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/integration/voxellink"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/migrate"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/monitor"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/store"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/transport"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/web"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -31,9 +33,22 @@ func main() {
 		worker()
 	case "bot":
 		bot()
+	case "migrate":
+		migrateDatabase()
 	default:
 		log.Fatalf("unknown role %q", role)
 	}
+}
+func migrateDatabase() {
+	pool, err := pgxpool.New(context.Background(), requiredEnv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
+	if err := migrate.Apply(context.Background(), pool); err != nil {
+		log.Fatal(err)
+	}
+	log.Print("database migrations applied")
 }
 func api() {
 	ctx := context.Background()
