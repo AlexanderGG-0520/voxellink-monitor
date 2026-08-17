@@ -27,6 +27,33 @@ func Connect(ctx context.Context, url string) (*Postgres, error) {
 
 func (s *Postgres) Close() { s.pool.Close() }
 
+// UpsertVoxelLinkServer replaces only imported listing metadata and membership.
+// Checks, public state, and incidents remain Monitor-owned data.
+func (s *Postgres) UpsertVoxelLinkServer(ctx context.Context, imported domain.ImportedServer) (domain.Server, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Server{}, err
+	}
+	defer tx.Rollback(ctx)
+	var server domain.Server
+	err = tx.QueryRow(ctx, `INSERT INTO monitored_servers (id, external_source, external_server_id, name, hostname, port, transport) VALUES (gen_random_uuid(), 'voxellink', $1, $2, $3, $4, $5::transport_kind) ON CONFLICT (external_source, external_server_id) DO UPDATE SET name = EXCLUDED.name, hostname = EXCLUDED.hostname, port = EXCLUDED.port, transport = EXCLUDED.transport, updated_at = now() RETURNING id::text, name, hostname, port, status::text, transport::text, enabled`, imported.ExternalID, imported.Name, imported.Hostname, imported.Port, imported.Transport).Scan(&server.ID, &server.Name, &server.Hostname, &server.Port, &server.Status, &server.Transport, &server.Enabled)
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("upsert VoxelLink server: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM server_members WHERE server_id = $1::uuid AND source = 'voxellink'`, server.ID); err != nil {
+		return domain.Server{}, err
+	}
+	for _, member := range imported.Members {
+		if _, err = tx.Exec(ctx, `INSERT INTO server_members (server_id, discord_user_id, role, source) VALUES ($1::uuid, $2, $3, 'voxellink')`, server.ID, member.DiscordUserID, member.Role); err != nil {
+			return domain.Server{}, fmt.Errorf("store VoxelLink member: %w", err)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.Server{}, err
+	}
+	return server, nil
+}
+
 func (s *Postgres) EnabledServers(ctx context.Context) ([]domain.Server, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id::text, name, hostname, port, status::text, transport::text, enabled FROM monitored_servers WHERE enabled ORDER BY created_at`)
 	if err != nil {

@@ -21,10 +21,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The API health endpoint is `GET /healthz`. The development-only Java protocol check is `GET /api/v1/probe?host=example.org`; production registration will only allow VoxelLink-verified endpoints.
+The API health endpoint is `GET /healthz`. Monitoring targets are imported only from VoxelLink through the trusted integration endpoint; arbitrary-host probing is intentionally unavailable.
 
 ## Current foundation
 
 The Worker now persists checks in PostgreSQL and monitors every enabled server at the configured interval. `DIRECT` and `CLOUDFLARE_SPECTRUM` endpoints use external Java STATUS Ping; tunnel transport deliberately records `PROBE_ERROR` / `UNKNOWN` until its `cloudflared` adapter is configured. The database transaction opens an Incident on the third consecutive external failure and resolves it after the second consecutive success.
 
-Next: VoxelLink import and ownership verification, Discord Gateway notifications, encrypted Tunnel credentials, retention aggregation, and the OAuth-backed owner/status-page UI.
+VoxelLink import and ownership snapshotting are available through the contract in [docs/voxellink-integration.md](docs/voxellink-integration.md). Next: Discord Gateway notifications, encrypted Tunnel credentials, retention aggregation, and the OAuth-backed owner/status-page UI.

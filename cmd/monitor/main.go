@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/alexandergg-0520/voxellink-monitor/internal/minecraft"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/integration"
+	"github.com/alexandergg-0520/voxellink-monitor/internal/integration/voxellink"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/monitor"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/store"
 )
@@ -34,19 +37,52 @@ func main() {
 	}
 }
 func api() {
+	ctx := context.Background()
+	repository, err := store.Connect(ctx, requiredEnv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer repository.Close()
+	client, err := voxellink.New(requiredEnv("VOXELLINK_API_BASE_URL"), requiredEnv("VOXELLINK_API_TOKEN"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	importer := integration.NewImporter(client, repository)
+	syncToken := requiredEnv("INTEGRATION_SYNC_TOKEN")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("/api/v1/probe", func(w http.ResponseWriter, r *http.Request) {
-		host := r.URL.Query().Get("host")
-		if host == "" {
-			http.Error(w, "host is required", http.StatusBadRequest)
+	mux.HandleFunc("/api/v1/integrations/voxellink/import", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		result := minecraft.PingJava(host, 25565, 5*time.Second)
+		if !authorized(r, syncToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		defer r.Body.Close()
+		var request struct {
+			ExternalServerID string `json:"external_server_id"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		server, err := importer.Import(r.Context(), request.ExternalServerID)
+		if err != nil {
+			slog.Default().Warn("VoxelLink import failed", "error", err)
+			http.Error(w, "VoxelLink import failed", http.StatusBadGateway)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(result)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(server)
 	})
 	log.Fatal(http.ListenAndServe(env("HTTP_ADDR", ":8080"), mux))
+}
+func authorized(request *http.Request, token string) bool {
+	value := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
+	return len(value) == len(token) && subtle.ConstantTimeCompare([]byte(value), []byte(token)) == 1
 }
 func worker() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

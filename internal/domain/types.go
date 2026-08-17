@@ -39,3 +39,15 @@ type Server struct {
 	Transport          string
 	Enabled            bool
 }
+
+// ImportedServer is the local immutable copy of a VoxelLink listing needed to
+// continue monitoring while VoxelLink is unavailable.
+type ImportedServer struct {
+	ExternalID string
+	Name       string
+	Hostname   string
+	Port       int
+	Transport  string
+	Members    []ServerMember
+}
+type ServerMember struct{ DiscordUserID, Role string }
