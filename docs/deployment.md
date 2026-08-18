@@ -37,7 +37,7 @@ The API returns `204 No Content` when ready. Review the `migrate` container log 
 
 For the small Linode deployment, use `docker-compose.linode.yml` instead of the default Compose file. It reuses the VoxelLink Web PostgreSQL daemon on the private `voxellink-data` network, with a separate `voxellink_monitor` database. This avoids paying the memory cost of a second PostgreSQL daemon.
 
-Attach the VoxelLink Web `postgres` service to `voxellink-data` with the alias `voxellink-postgres`, then create the `voxellink_monitor` database using the existing `voxellink` database user. Copy `.env.linode.example` to `.env` and provide the Web database password plus the shared VoxelLink Monitor service token. The Monitor API is available to the existing `cloudflared` container as `http://monitor-api:8080` after attaching it to the `voxellink-edge` network.
+Attach the VoxelLink Web `postgres` service to `voxellink-data` with the alias `voxellink-postgres`, then create the `voxellink_monitor` database using the existing `voxellink` database user. Run `./scripts/bootstrap-linode.sh ../web/.env` from the Monitor checkout: it reuses the existing Web database password, Discord OAuth credentials, and Monitor service token, and prompts only for the Discord Bot Token. The Monitor API is available to the existing `cloudflared` container as `http://monitor-api:8080` after attaching it to the `voxellink-edge` network.
 
 ## Upgrades and backups
 
