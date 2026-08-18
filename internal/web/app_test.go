@@ -35,11 +35,35 @@ func (fakeRepository) Uptime24h(context.Context, string) (float64, error) { retu
 func (fakeRepository) RecentIncidents(context.Context, string, int) ([]domain.Incident, error) {
 	return nil, nil
 }
+func (fakeRepository) RecordUserReport(context.Context, domain.UserReport) (domain.CrowdSignal, error) {
+	return domain.CrowdSignal{}, nil
+}
+func (fakeRepository) CrowdSignal(context.Context, string) (domain.CrowdSignal, error) {
+	return domain.CrowdSignal{}, nil
+}
 
 type fakeImporter struct{}
 
 func (fakeImporter) Import(context.Context, string) (domain.Server, error) {
 	return domain.Server{}, nil
+}
+func TestPublicReportIsAccepted(t *testing.T) {
+	app := testApp(t)
+	request := httptest.NewRequest(http.MethodPost, "/servers/server-id/reports", strings.NewReader("report_type=CONNECTION&detail=cannot+join"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+func TestHomeRendersReportForm(t *testing.T) {
+	app := testApp(t)
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "/reports") {
+		t.Fatalf("public report form was not rendered: status=%d body=%q", response.Code, response.Body.String())
+	}
 }
 func testApp(t *testing.T) *App {
 	t.Helper()

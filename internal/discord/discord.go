@@ -3,8 +3,11 @@ package discord
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/alexandergg-0520/voxellink-monitor/internal/domain"
 	"github.com/bwmarrin/discordgo"
@@ -18,6 +21,7 @@ type QueryRepository interface {
 	SnapshotByDiscordChannel(context.Context, string) (domain.ServerSnapshot, error)
 	Uptime24h(context.Context, string) (float64, error)
 	RecentIncidents(context.Context, string, int) ([]domain.Incident, error)
+	RecordUserReport(context.Context, domain.UserReport) (domain.CrowdSignal, error)
 }
 
 type Notifier struct {
@@ -73,10 +77,12 @@ func (b *Bot) Run(ctx context.Context) error {
 }
 func commands() []*discordgo.ApplicationCommand {
 	serverOption := &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "server", Description: "VoxelLink server ID（ステータスチャンネル内では不要）", Required: false}
+	reportType := &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "type", Description: "発生している問題", Required: true, Choices: []*discordgo.ApplicationCommandOptionChoice{{Name: "接続できない", Value: string(domain.ReportConnection)}, {Name: "ログインできない", Value: string(domain.ReportLogin)}, {Name: "タイムアウト", Value: string(domain.ReportTimeout)}, {Name: "ラグ・遅延", Value: string(domain.ReportLag)}, {Name: "その他", Value: string(domain.ReportOther)}}}
 	return []*discordgo.ApplicationCommand{
 		{Name: "status", Description: "Show the current player-facing server status", Options: []*discordgo.ApplicationCommandOption{serverOption}},
 		{Name: "uptime", Description: "Show availability over the last 24 hours", Options: []*discordgo.ApplicationCommandOption{serverOption}},
 		{Name: "incidents", Description: "Show recent incidents", Options: []*discordgo.ApplicationCommandOption{serverOption}},
+		{Name: "report", Description: "接続トラブルを匿名で報告する", Options: []*discordgo.ApplicationCommandOption{reportType, serverOption}},
 		{Name: "monitor", Description: "Open the server owner console"},
 	}
 }
@@ -89,15 +95,46 @@ func (b *Bot) handleInteraction(session *discordgo.Session, interaction *discord
 		b.monitorLink(session, interaction)
 		return
 	}
+	var serverExternalID string
+	var reportType domain.UserReportType
+	for _, option := range data.Options {
+		switch option.Name {
+		case "server":
+			serverExternalID = option.StringValue()
+		case "type":
+			reportType = domain.UserReportType(option.StringValue())
+		}
+	}
 	var snapshot domain.ServerSnapshot
 	var err error
-	if len(data.Options) > 0 && data.Options[0].StringValue() != "" {
-		snapshot, err = b.queries.SnapshotByExternalID(context.Background(), data.Options[0].StringValue())
+	if serverExternalID != "" {
+		snapshot, err = b.queries.SnapshotByExternalID(context.Background(), serverExternalID)
 	} else {
 		snapshot, err = b.queries.SnapshotByDiscordChannel(context.Background(), interaction.ChannelID)
 	}
 	if err != nil {
 		respond(session, interaction, "そのVoxelLink掲載サーバーは見つかりません。", true)
+		return
+	}
+	if data.Name == "report" {
+		if interaction.Member == nil || interaction.Member.User == nil {
+			respond(session, interaction, "報告者を確認できませんでした。", true)
+			return
+		}
+		if !validReportType(reportType) {
+			respond(session, interaction, "報告種別が不正です。", true)
+			return
+		}
+		signal, reportErr := b.queries.RecordUserReport(context.Background(), domain.UserReport{ServerID: snapshot.ID, Type: reportType, ReporterHash: discordReporterHash(interaction.Member.User.ID, snapshot.ID), At: time.Now().UTC()})
+		if reportErr != nil {
+			respond(session, interaction, "報告を保存できませんでした。", true)
+			return
+		}
+		content := "報告ありがとう。匿名で集計しました。"
+		if signal.Anomalous {
+			content += " 同様の報告が増えているため、状態を確認中です。"
+		}
+		respond(session, interaction, content, true)
 		return
 	}
 	var content string
@@ -122,6 +159,17 @@ func (b *Bot) handleInteraction(session *discordgo.Session, interaction *discord
 		return
 	}
 	respond(session, interaction, content, false)
+}
+func validReportType(kind domain.UserReportType) bool {
+	switch kind {
+	case domain.ReportConnection, domain.ReportLogin, domain.ReportTimeout, domain.ReportLag, domain.ReportOther:
+		return true
+	}
+	return false
+}
+func discordReporterHash(userID, serverID string) string {
+	digest := sha256.Sum256([]byte("discord|" + userID + "|" + serverID))
+	return hex.EncodeToString(digest[:])
 }
 func (b *Bot) monitorLink(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
 	if b.consoleURL == "" {

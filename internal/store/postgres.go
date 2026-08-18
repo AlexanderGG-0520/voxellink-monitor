@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alexandergg-0520/voxellink-monitor/internal/crowd"
 	"github.com/alexandergg-0520/voxellink-monitor/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +45,10 @@ func (s *Postgres) RunRetention(ctx context.Context) (domain.RetentionStats, err
 	if err != nil {
 		return domain.RetentionStats{}, fmt.Errorf("roll up hourly checks: %w", err)
 	}
+	_, err = tx.Exec(ctx, `INSERT INTO user_report_aggregates_15m (server_id, bucket_start, reports_total, connection_reports, login_reports, timeout_reports, lag_reports, other_reports) SELECT server_id, date_bin('15 minutes', reported_at, timestamptz '2000-01-01 00:00:00+00'), count(*), count(*) FILTER (WHERE report_type = 'CONNECTION'), count(*) FILTER (WHERE report_type = 'LOGIN'), count(*) FILTER (WHERE report_type = 'TIMEOUT'), count(*) FILTER (WHERE report_type = 'LAG'), count(*) FILTER (WHERE report_type = 'OTHER') FROM user_reports WHERE reported_at < date_trunc('hour', now()) GROUP BY server_id, date_bin('15 minutes', reported_at, timestamptz '2000-01-01 00:00:00+00') ON CONFLICT (server_id, bucket_start) DO UPDATE SET reports_total = EXCLUDED.reports_total, connection_reports = EXCLUDED.connection_reports, login_reports = EXCLUDED.login_reports, timeout_reports = EXCLUDED.timeout_reports, lag_reports = EXCLUDED.lag_reports, other_reports = EXCLUDED.other_reports`)
+	if err != nil {
+		return domain.RetentionStats{}, fmt.Errorf("roll up user reports: %w", err)
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO daily_uptime (server_id, day, checks_total, checks_successful, checks_excluded, uptime_percent) SELECT server_id, bucket_start::date, sum(checks_total), sum(checks_successful), sum(checks_excluded), round(100.0 * sum(checks_successful) / nullif(sum(checks_total) - sum(checks_excluded), 0), 2) FROM check_aggregates_hourly WHERE bucket_start < date_trunc('day', now()) GROUP BY server_id, bucket_start::date ON CONFLICT (server_id, day) DO UPDATE SET checks_total = EXCLUDED.checks_total, checks_successful = EXCLUDED.checks_successful, checks_excluded = EXCLUDED.checks_excluded, uptime_percent = EXCLUDED.uptime_percent`)
 	if err != nil {
 		return domain.RetentionStats{}, fmt.Errorf("roll up daily uptime: %w", err)
@@ -64,10 +69,91 @@ func (s *Postgres) RunRetention(ctx context.Context) (domain.RetentionStats, err
 		return stats, err
 	}
 	stats.HourlyDeleted = command.RowsAffected()
+	if _, err = tx.Exec(ctx, `DELETE FROM user_reports WHERE reported_at < now() - interval '30 days'`); err != nil {
+		return stats, err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM user_report_aggregates_15m WHERE bucket_start < now() - interval '90 days'`); err != nil {
+		return stats, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return stats, err
 	}
 	return stats, nil
+}
+
+// RecordUserReport stores one anonymous report per server per day. Duplicate
+// clicks are intentionally harmless and do not amplify the public signal.
+func (s *Postgres) RecordUserReport(ctx context.Context, report domain.UserReport) (domain.CrowdSignal, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.CrowdSignal{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO user_reports (server_id, reported_at, reported_day, report_type, reporter_hash, detail) VALUES ($1::uuid, $2, $2::date, $3::user_report_type, $4, $5) ON CONFLICT (server_id, reporter_hash, reported_day) DO NOTHING`, report.ServerID, report.At, string(report.Type), report.ReporterHash, report.Detail)
+	if err != nil {
+		return domain.CrowdSignal{}, fmt.Errorf("insert user report: %w", err)
+	}
+	signal, err := crowdSignal(ctx, tx, report.ServerID, report.At)
+	if err != nil {
+		return domain.CrowdSignal{}, err
+	}
+	if signal.Anomalous {
+		command, updateErr := tx.Exec(ctx, `UPDATE monitored_servers SET status = 'DEGRADED', status_changed_at = $2, updated_at = now() WHERE id = $1::uuid AND status = 'OPERATIONAL'`, report.ServerID, report.At)
+		err = updateErr
+		if err != nil {
+			return domain.CrowdSignal{}, err
+		}
+		if command.RowsAffected() == 1 {
+			if _, err = tx.Exec(ctx, `INSERT INTO pending_state_notifications (server_id, state, outcome, created_at) VALUES ($1::uuid, 'DEGRADED', 'SUCCESS', $2)`, report.ServerID, report.At); err != nil {
+				return domain.CrowdSignal{}, fmt.Errorf("queue crowd notification: %w", err)
+			}
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.CrowdSignal{}, err
+	}
+	return signal, nil
+}
+
+func (s *Postgres) PendingStateNotifications(ctx context.Context, limit int) ([]domain.PendingStateNotification, error) {
+	rows, err := s.pool.Query(ctx, `SELECT n.id, s.id::text, s.name, s.hostname, s.port, s.status::text, s.transport::text, s.enabled, n.state::text, n.outcome::text, n.created_at FROM pending_state_notifications n JOIN monitored_servers s ON s.id = n.server_id WHERE n.delivered_at IS NULL ORDER BY n.id LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pending []domain.PendingStateNotification
+	for rows.Next() {
+		var item domain.PendingStateNotification
+		if err := rows.Scan(&item.ID, &item.Server.ID, &item.Server.Name, &item.Server.Hostname, &item.Server.Port, &item.Server.Status, &item.Server.Transport, &item.Server.Enabled, &item.State, &item.Result.Outcome, &item.Result.At); err != nil {
+			return nil, err
+		}
+		pending = append(pending, item)
+	}
+	return pending, rows.Err()
+}
+
+func (s *Postgres) MarkStateNotificationDelivered(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `UPDATE pending_state_notifications SET delivered_at = now() WHERE id = $1 AND delivered_at IS NULL`, id)
+	return err
+}
+
+func (s *Postgres) CrowdSignal(ctx context.Context, serverID string) (domain.CrowdSignal, error) {
+	return crowdSignal(ctx, s.pool, serverID, time.Now())
+}
+
+type queryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func crowdSignal(ctx context.Context, q queryer, serverID string, at time.Time) (domain.CrowdSignal, error) {
+	var reports int
+	var baseline float64
+	err := q.QueryRow(ctx, `WITH current_bucket AS (SELECT date_bin('15 minutes', $2::timestamptz, timestamptz '2000-01-01 00:00:00+00') AS start), historical AS (SELECT count(*)::float8 AS reports FROM user_reports, current_bucket WHERE server_id = $1::uuid AND reported_at >= $2 - interval '28 days' AND reported_at < current_bucket.start AND extract(dow FROM reported_at) = extract(dow FROM current_bucket.start) AND extract(hour FROM reported_at) = extract(hour FROM current_bucket.start) AND floor(extract(minute FROM reported_at) / 15) = floor(extract(minute FROM current_bucket.start) / 15) GROUP BY date_trunc('day', reported_at)) SELECT (SELECT count(*) FROM user_reports, current_bucket WHERE server_id = $1::uuid AND reported_at >= current_bucket.start AND reported_at < current_bucket.start + interval '15 minutes'), coalesce((SELECT avg(reports) FROM historical), 0)`, serverID, at).Scan(&reports, &baseline)
+	if err != nil {
+		return domain.CrowdSignal{}, fmt.Errorf("read crowd signal: %w", err)
+	}
+	value := crowd.Evaluate(reports, baseline)
+	return domain.CrowdSignal{Reports: value.Reports, Baseline: value.Baseline, Threshold: value.Threshold, Anomalous: value.Anomalous}, nil
 }
 
 // UpsertVoxelLinkServer replaces only imported listing metadata and membership.
@@ -313,6 +399,15 @@ func (s *Postgres) RecordCheck(ctx context.Context, server domain.Server, result
 	newState, changed, err := stateAfter(ctx, tx, server, result)
 	if err != nil {
 		return false, "", err
+	}
+	if result.Outcome == domain.Success && newState == domain.Operational {
+		signal, signalErr := crowdSignal(ctx, tx, server.ID, result.At)
+		if signalErr != nil {
+			return false, "", signalErr
+		}
+		if signal.Anomalous {
+			newState, changed = domain.Degraded, server.Status != domain.Degraded
+		}
 	}
 	if changed {
 		_, err = tx.Exec(ctx, `UPDATE monitored_servers SET status = $2::public_status, status_changed_at = $3, updated_at = now() WHERE id = $1::uuid`, server.ID, string(newState), result.At)

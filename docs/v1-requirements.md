@@ -13,6 +13,8 @@ VoxelLink Monitor is an independently deployable availability-monitoring platfor
 - `UNKNOWN` means the monitor/probe transport failed and must not be presented as a server outage. `MAINTENANCE` excludes the scheduled period from availability and incident notification.
 - Incidents record first failure, confirmation, first recovery observation, confirmed resolution, and classified cause.
 - `DEGRADED` is reserved for a functioning but materially abnormal service (latency deviation or flapping); its threshold policy is configurable without changing the public API.
+- Players can submit one anonymous, server-scoped trouble report per day with a symptom category. A 15-minute spike is anomalous only when it reaches at least three independent reports and exceeds the matching weekday/time-of-day baseline from the preceding 28 days. An anomalous report signal changes a probe-healthy server to `DEGRADED`; a confirmed active-probe outage remains `OUTAGE`.
+- The public status page and Discord `/report` command both submit the same crowdsourced signal. Crowd-driven state changes are durably queued for the Worker to notify the configured Discord status channel.
 - Raw checks: 30 days. 5/15-minute aggregate data: 90 days. Hourly aggregate data: one year. Daily availability, incidents, and maintenance history: long-term retention.
 - The web console uses Discord OAuth2. Owners/managers see only VoxelLink servers for which they have verified membership. Discord bot commands are player-facing (`/status`, `/uptime`, `/incidents`) and direct management to the web console.
 - Each listed server may have its own Discord status channel. State changes are posted once per server channel; messages are concise and player-facing.
@@ -22,4 +24,3 @@ VoxelLink Monitor is an independently deployable availability-monitoring platfor
 ## Non-goals for v1
 
 Bedrock probing, public arbitrary-host monitoring, multi-region consensus, an on-premise agent, SMS notification, and AI incident analysis are explicitly post-v1. Arbitrary endpoints are prohibited to avoid turning the probe into a scanning service.
-
