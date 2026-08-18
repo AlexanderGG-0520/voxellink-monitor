@@ -15,7 +15,9 @@ services:
     environment:
       HTTP_ADDR: ${HTTP_ADDR:-:8080}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
-      VOXELLINK_API_BASE_URL: ${VOXELLINK_API_BASE_URL:?set VOXELLINK_API_BASE_URL in .env}
+      # Both applications share voxellink-edge on Linode. Keep imports private
+      # instead of hairpinning through the public Cloudflare Tunnel.
+      VOXELLINK_API_BASE_URL: http://voxellink-api:3000
       VOXELLINK_API_TOKEN: ${VOXELLINK_API_TOKEN:?set VOXELLINK_API_TOKEN in .env}
       INTEGRATION_SYNC_TOKEN: ${INTEGRATION_SYNC_TOKEN:?set INTEGRATION_SYNC_TOKEN in .env}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?set DISCORD_CLIENT_ID in .env}
@@ -42,7 +44,7 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
       CLOUDFLARED_BIN: ${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}
       CLOUDFLARED_STARTUP_TIMEOUT: ${CLOUDFLARED_STARTUP_TIMEOUT:-10s}
-      VOXELLINK_API_BASE_URL: ${VOXELLINK_API_BASE_URL:?set VOXELLINK_API_BASE_URL in .env}
+      VOXELLINK_API_BASE_URL: http://voxellink-api:3000
       VOXELLINK_API_TOKEN: ${VOXELLINK_API_TOKEN:?set VOXELLINK_API_TOKEN in .env}
     depends_on:
       migrate:
