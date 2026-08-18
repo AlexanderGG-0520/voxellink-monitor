@@ -37,7 +37,11 @@ func PingJavaEndpoint(endpointHost string, endpointPort int, handshakeHost strin
 	defer c.Close()
 	_ = c.SetDeadline(now.Add(timeout))
 	hostBytes := []byte(handshakeHost)
-	packet := append([]byte{0x00, 0x00}, varInt(765)...)
+	// Handshake packet: packet ID (0x00), protocol version, host, port, next
+	// state. A second leading zero would make the protocol version 0 and shift
+	// every remaining field, causing a STATUS timeout from otherwise reachable
+	// servers.
+	packet := append([]byte{0x00}, varInt(765)...)
 	packet = append(packet, varInt(len(hostBytes))...)
 	packet = append(packet, hostBytes...)
 	p := make([]byte, 2)
