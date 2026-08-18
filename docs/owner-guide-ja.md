@@ -35,7 +35,7 @@ Bot は利用者のメッセージを読む必要も、管理権限を持つ必�
 
 ### 3. Monitor の管理画面に Discord でログインする
 
-[VoxelLink Monitor](https://monitor.alec-ofc.com/) を開き、**Discordで管理画面へログイン** を選びます。
+[VoxelLink Monitor](https://voxellink.alec-ofc.com/) を開き、**Discordで管理画面へログイン** を選びます。
 
 表示されるサーバーカードで、次を確認できます。
 

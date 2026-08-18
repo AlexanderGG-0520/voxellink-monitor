@@ -31,6 +31,6 @@ upsert() {
   mv "$tmp" "$web_env"
 }
 
-upsert VOXELLINK_MONITOR_IMPORT_URL "https://monitor.alec-ofc.com"
+upsert VOXELLINK_MONITOR_IMPORT_URL "https://voxellink.alec-ofc.com"
 upsert VOXELLINK_MONITOR_IMPORT_TOKEN "$(read_env INTEGRATION_SYNC_TOKEN)"
 echo "Connected VoxelLink Web's durable import queue to Monitor."
