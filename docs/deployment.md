@@ -33,6 +33,12 @@ curl -fsS "${PUBLIC_BASE_URL}/healthz"
 
 The API returns `204 No Content` when ready. Review the `migrate` container log first if a dependent service does not start. On first launch, import a VoxelLink listing through the trusted integration endpoint, then verify the target appears on the public status page and owner console.
 
+## Linode single-host deployment
+
+For the small Linode deployment, use `docker-compose.linode.yml` instead of the default Compose file. It reuses the VoxelLink Web PostgreSQL daemon on the private `voxellink-data` network, with a separate `voxellink_monitor` database. This avoids paying the memory cost of a second PostgreSQL daemon.
+
+Attach the VoxelLink Web `postgres` service to `voxellink-data` with the alias `voxellink-postgres`, then create the `voxellink_monitor` database using the existing `voxellink` database user. Copy `.env.linode.example` to `.env` and provide the Web database password plus the shared VoxelLink Monitor service token. The Monitor API is available to the existing `cloudflared` container as `http://monitor-api:8080` after attaching it to the `voxellink-edge` network.
+
 ## Upgrades and backups
 
 Pull the new image or source, then run `docker compose up -d --build`. Embedded migrations are recorded in `schema_migrations` and are safe to rerun. Back up the PostgreSQL volume before upgrades and periodically thereafter; it contains the monitor configuration, checks, rollups, memberships, and Incident history.

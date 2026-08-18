@@ -1,0 +1,70 @@
+# Linode deployment overlay. The VoxelLink Web PostgreSQL service is reused
+# through the private voxellink-data network; no second database daemon runs.
+services:
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+    networks: [voxellink-data]
+    restart: "no"
+
+  api:
+    build: .
+    command: ["api"]
+    environment:
+      HTTP_ADDR: ${HTTP_ADDR:-:8080}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      VOXELLINK_API_BASE_URL: ${VOXELLINK_API_BASE_URL:?set VOXELLINK_API_BASE_URL in .env}
+      VOXELLINK_API_TOKEN: ${VOXELLINK_API_TOKEN:?set VOXELLINK_API_TOKEN in .env}
+      INTEGRATION_SYNC_TOKEN: ${INTEGRATION_SYNC_TOKEN:?set INTEGRATION_SYNC_TOKEN in .env}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?set DISCORD_CLIENT_ID in .env}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:?set DISCORD_CLIENT_SECRET in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      voxellink-data: {}
+      voxellink-edge:
+        aliases: [monitor-api]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["worker"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      MONITOR_INTERVAL: ${MONITOR_INTERVAL:-60s}
+      STATUS_TIMEOUT: ${STATUS_TIMEOUT:-5s}
+      FAILURE_RETRY_INTERVAL: ${FAILURE_RETRY_INTERVAL:-10s}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
+      CLOUDFLARED_BIN: ${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}
+      CLOUDFLARED_STARTUP_TIMEOUT: ${CLOUDFLARED_STARTUP_TIMEOUT:-10s}
+      VOXELLINK_API_BASE_URL: ${VOXELLINK_API_BASE_URL:?set VOXELLINK_API_BASE_URL in .env}
+      VOXELLINK_API_TOKEN: ${VOXELLINK_API_TOKEN:?set VOXELLINK_API_TOKEN in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [voxellink-data]
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: ["bot"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [voxellink-data]
+    restart: unless-stopped
+
+networks:
+  voxellink-data:
+    external: true
+  voxellink-edge:
+    external: true
