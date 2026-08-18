@@ -15,6 +15,8 @@ import (
 type Repository interface {
 	EnabledServers(context.Context) ([]domain.Server, error)
 	RecordCheck(context.Context, domain.Server, domain.CheckResult) (bool, domain.PublicStatus, error)
+	PendingStateNotifications(context.Context, int) ([]domain.PendingStateNotification, error)
+	MarkStateNotificationDelivered(context.Context, int64) error
 }
 type Notifier interface {
 	StateChanged(context.Context, domain.Server, domain.PublicStatus, domain.CheckResult) error
@@ -54,6 +56,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.RunOnce(ctx); err != nil {
 		w.logger.Error("initial monitor pass failed", "error", err)
 	}
+	w.dispatchPendingNotifications(ctx)
 	ticker := time.NewTicker(w.interval)
 	retentionTicker := time.NewTicker(6 * time.Hour)
 	syncTicker := time.NewTicker(6 * time.Hour)
@@ -68,10 +71,27 @@ func (w *Worker) Run(ctx context.Context) error {
 			if err := w.RunOnce(ctx); err != nil {
 				w.logger.Error("monitor pass failed", "error", err)
 			}
+			w.dispatchPendingNotifications(ctx)
 		case <-retentionTicker.C:
 			w.runRetention(ctx)
 		case <-syncTicker.C:
 			w.syncVoxelLink(ctx)
+		}
+	}
+}
+func (w *Worker) dispatchPendingNotifications(ctx context.Context) {
+	pending, err := w.repository.PendingStateNotifications(ctx, 100)
+	if err != nil {
+		w.logger.Error("list pending notifications", "error", err)
+		return
+	}
+	for _, item := range pending {
+		if err := w.notifier.StateChanged(ctx, item.Server, item.State, item.Result); err != nil {
+			w.logger.Error("send crowd status notification", "server_id", item.Server.ID, "error", err)
+			continue
+		}
+		if err := w.repository.MarkStateNotificationDelivered(ctx, item.ID); err != nil {
+			w.logger.Error("mark crowd notification delivered", "notification_id", item.ID, "error", err)
 		}
 	}
 }

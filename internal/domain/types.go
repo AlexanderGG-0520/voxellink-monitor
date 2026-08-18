@@ -67,4 +67,34 @@ type Incident struct {
 	ResolvedAt             *time.Time
 }
 
+type UserReportType string
+
+const (
+	ReportConnection UserReportType = "CONNECTION"
+	ReportLogin      UserReportType = "LOGIN"
+	ReportTimeout    UserReportType = "TIMEOUT"
+	ReportLag        UserReportType = "LAG"
+	ReportOther      UserReportType = "OTHER"
+)
+
+type UserReport struct {
+	ServerID, ReporterHash, Detail string
+	Type                           UserReportType
+	At                             time.Time
+}
+
+// CrowdSignal is the passive-report evidence currently affecting a server.
+// It never overrides a confirmed active-probe OUTAGE.
+type CrowdSignal struct {
+	Reports, Baseline, Threshold int
+	Anomalous                    bool
+}
+
+type PendingStateNotification struct {
+	ID     int64
+	Server Server
+	State  PublicStatus
+	Result CheckResult
+}
+
 type RetentionStats struct{ RawDeleted, FifteenMinuteDeleted, HourlyDeleted int64 }

@@ -35,6 +35,10 @@ The web console is served by the `api` service. Configure a Discord OAuth2 appli
 
 The public home page is the Network Status page: it lists each enabled monitored server with its current public state. The owner console adds its current endpoint, last check, latency, 24-hour availability, and three most recent Incidents.
 
+Players can also report connection trouble from each public status card. Reports have five symptom categories, are de-duplicated by a daily server-scoped non-reversible hash (no raw IP or identity is stored), and feed a 15-minute anomaly detector. The detector compares the report count with the preceding four weeks' matching weekday/time slot; a conservative spike changes a probe-healthy server to `DEGRADED`, while a confirmed active probe failure remains `OUTAGE`.
+
+The Discord bot also provides `/report`: choose a symptom and optionally a VoxelLink server ID (not needed in its configured status channel). Discord user IDs are hashed before storage. A crowd-driven `DEGRADED` transition is queued durably and delivered by the Worker to the server's existing status channel, so the public API never needs direct Discord credentials.
+
 After import, the Worker refreshes VoxelLink listing metadata and verified memberships on startup and every six hours. A refresh failure only logs the error: existing endpoint configuration, checks, status pages, Incidents, and Discord notices continue from Monitor PostgreSQL.
 
 Maintenance windows are entered in the console as JST start and end times. The Worker continues collecting observations during the window, but exposes `MAINTENANCE` and excludes those observations from Incident opening, notifications, and uptime calculations.

@@ -7,10 +7,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +30,8 @@ type Repository interface {
 	PublicSnapshots(context.Context) ([]domain.ServerSnapshot, error)
 	Uptime24h(context.Context, string) (float64, error)
 	RecentIncidents(context.Context, string, int) ([]domain.Incident, error)
+	RecordUserReport(context.Context, domain.UserReport) (domain.CrowdSignal, error)
+	CrowdSignal(context.Context, string) (domain.CrowdSignal, error)
 	SetEnabledForDiscordMember(context.Context, string, string, bool) error
 	SetNotificationChannelForDiscordMember(context.Context, string, string, string) error
 	ScheduleMaintenanceForDiscordMember(context.Context, string, string, time.Time, time.Time) error
@@ -62,6 +66,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/login", a.login)
 	mux.HandleFunc("/oauth/discord/callback", a.callback)
 	mux.HandleFunc("/console", a.console)
+	mux.HandleFunc("/servers/", a.report)
 	mux.HandleFunc("/console/servers/", a.updateServer)
 	mux.HandleFunc("/api/v1/integrations/voxellink/import", a.importServer)
 	return mux
@@ -77,7 +82,77 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load status", 500)
 		return
 	}
-	render(w, homeTemplate, struct{ Servers []domain.ServerSnapshot }{servers})
+	type publicServer struct {
+		domain.ServerSnapshot
+		Crowd domain.CrowdSignal
+	}
+	view := make([]publicServer, 0, len(servers))
+	for _, server := range servers {
+		signal, signalErr := a.repository.CrowdSignal(r.Context(), server.ID)
+		if signalErr != nil {
+			http.Error(w, "could not load crowd signal", 500)
+			return
+		}
+		view = append(view, publicServer{server, signal})
+	}
+	render(w, homeTemplate, struct{ Servers []publicServer }{view})
+}
+func (a *App) report(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/servers/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "reports" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", 400)
+		return
+	}
+	kind := domain.UserReportType(r.Form.Get("report_type"))
+	switch kind {
+	case domain.ReportConnection, domain.ReportLogin, domain.ReportTimeout, domain.ReportLag, domain.ReportOther:
+	default:
+		http.Error(w, "invalid report type", 400)
+		return
+	}
+	detail := strings.TrimSpace(r.Form.Get("detail"))
+	if len(detail) > 280 {
+		http.Error(w, "report is too long", 400)
+		return
+	}
+	_, err := a.repository.RecordUserReport(r.Context(), domain.UserReport{ServerID: parts[0], Type: kind, Detail: detail, ReporterHash: a.reporterHash(r, parts[0]), At: time.Now().UTC()})
+	if err != nil {
+		http.Error(w, "could not save report", 500)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+func (a *App) reporterHash(r *http.Request, serverID string) string {
+	// The rotating hash is only used for daily de-duplication; raw client data
+	// is never persisted. SessionSecret keeps it non-reversible to the public.
+	day := time.Now().UTC().Format("2006-01-02")
+	input := strings.Join([]string{a.config.SessionSecret, clientAddress(r), r.UserAgent(), serverID, day}, "|")
+	digest := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(digest[:])
+}
+func clientAddress(r *http.Request) string {
+	// cloudflared/Cloudflare supplies CF-Connecting-IP. X-Forwarded-For keeps
+	// the form usable behind a conventional reverse proxy; deployments should
+	// strip this client-supplied header at their trusted proxy boundary.
+	if value := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); value != "" {
+		return value
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomToken()
@@ -331,5 +406,5 @@ func render(w http.ResponseWriter, source string, data any) {
 	}
 }
 
-const homeTemplate = `<!doctype html><meta charset="utf-8"><title>VoxelLink Monitor</title><style>body{font:16px system-ui;background:#10131a;color:#eef2ff;margin:auto;max-width:760px;padding:32px}a,button{color:#9ed0ff}section{background:#1b2230;padding:16px;margin:12px 0;border-radius:10px}.status{font-weight:bold}</style><main><h1>VoxelLink Monitor</h1><p>Minecraft server availability, independently observed.</p>{{if .Servers}}{{range .Servers}}<section><strong>{{.Name}}</strong><p class="status">{{.Status}}{{if .LastOutcome}} · 最終確認 {{.LastCheckedAt}}{{end}}</p></section>{{end}}{{else}}<p>現在、公開中の監視対象はありません。</p>{{end}}<p><a href="/login">Discordで管理画面へログイン</a></p></main>`
+const homeTemplate = `<!doctype html><meta charset="utf-8"><title>VoxelLink Monitor</title><style>body{font:16px system-ui;background:#10131a;color:#eef2ff;margin:auto;max-width:760px;padding:32px}a,button,input,select{color:#9ed0ff}section{background:#1b2230;padding:16px;margin:12px 0;border-radius:10px}.status{font-weight:bold}input,select,button{padding:6px;margin:3px;background:#10131a;border:1px solid #526078;border-radius:4px}</style><main><h1>VoxelLink Monitor</h1><p>Minecraft server availability — active probe + player reports.</p>{{if .Servers}}{{range .Servers}}<section><strong>{{.Name}}</strong><p class="status">{{.Status}}{{if .LastOutcome}} · 最終確認 {{.LastCheckedAt}}{{end}}</p>{{if .Crowd.Anomalous}}<p>プレイヤー報告が通常より増えています（直近15分: {{.Crowd.Reports}}件 / 判定基準: {{.Crowd.Threshold}}件）。</p>{{end}}<form method="post" action="/servers/{{.ID}}/reports"><label>接続トラブルを報告 <select name="report_type"><option value="CONNECTION">接続できない</option><option value="LOGIN">ログインできない</option><option value="TIMEOUT">タイムアウト</option><option value="LAG">ラグ・遅延</option><option value="OTHER">その他</option></select></label><input name="detail" maxlength="280" placeholder="任意（280文字まで）"><button>報告する</button></form><small>同じサーバーへの報告は1日1件まで集計されます。IPアドレス等は保存しません。</small></section>{{end}}{{else}}<p>現在、公開中の監視対象はありません。</p>{{end}}<p><a href="/login">Discordで管理画面へログイン</a></p></main>`
 const consoleTemplate = `<!doctype html><meta charset="utf-8"><title>VoxelLink Monitor Console</title><style>body{font:16px system-ui;background:#10131a;color:#eef2ff;margin:auto;max-width:900px;padding:32px}section{background:#1b2230;padding:18px;margin:16px 0;border-radius:10px}form{margin:10px 0}input,button{padding:7px;margin:3px}.grid{display:flex;gap:20px;flex-wrap:wrap}.status{font-weight:bold}</style><main><h1>あなたの監視サーバー</h1>{{if .Servers}}{{range .Servers}}<section><h2>{{.Snapshot.Name}}</h2><p class="status">{{.Snapshot.Status}} · {{.Snapshot.Hostname}}:{{.Snapshot.Port}} · {{.Snapshot.Transport}}</p><div class="grid"><span>直近24時間: <strong>{{printf "%.2f" .Uptime24h}}%</strong></span>{{if .Snapshot.LastOutcome}}<span>最終確認: {{.Snapshot.LastCheckedAt}}{{if .Snapshot.Latency}} / {{.Snapshot.Latency.Milliseconds}}ms{{end}}</span>{{end}}</div><h3>直近Incident</h3>{{if .Incidents}}<ul>{{range .Incidents}}<li>{{.StartedAt}} — {{.State}}（{{.Reason}}）</li>{{end}}</ul>{{else}}<p>Incidentはありません。</p>{{end}}<form method="post" action="/console/servers/{{.Snapshot.ID}}/enabled"><input type="hidden" name="enabled" value="{{if .Snapshot.Enabled}}false{{else}}true{{end}}"><button>{{if .Snapshot.Enabled}}監視を無効化{{else}}監視を有効化{{end}}</button></form><form method="post" action="/console/servers/{{.Snapshot.ID}}/channel"><label>Discord ステータスチャンネルID <input name="channel_id" required></label><button>通知先を保存</button></form><form method="post" action="/console/servers/{{.Snapshot.ID}}/maintenance"><label>メンテ開始（JST）<input type="datetime-local" name="starts_at" required></label><label>終了（JST）<input type="datetime-local" name="ends_at" required></label><button>メンテナンスを予定</button></form></section>{{end}}{{else}}<p>管理できるVoxelLink掲載サーバーはまだありません。</p>{{end}}</main>`
