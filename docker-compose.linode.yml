@@ -12,6 +12,9 @@ services:
   api:
     build: .
     command: ["api"]
+    # The shared cloudflared container reaches this service through
+    # voxellink-edge. Do not bind the API to a host port on Linode.
+    ports: !reset []
     environment:
       HTTP_ADDR: ${HTTP_ADDR:-:8080}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
