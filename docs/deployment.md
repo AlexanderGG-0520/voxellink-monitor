@@ -39,6 +39,8 @@ For the small Linode deployment, use `docker-compose.linode.yml` instead of the 
 
 Attach the VoxelLink Web `postgres` service to `voxellink-data` with the alias `voxellink-postgres`, then create the `voxellink_monitor` database using the existing `voxellink` database user. Run `./scripts/bootstrap-linode.sh ../web/.env` from the Monitor checkout: it reuses the existing Web database password, Discord OAuth credentials, and Monitor service token, and prompts only for the Discord Bot Token. The Monitor API is available to the existing `cloudflared` container as `http://monitor-api:8080` after attaching it to the `voxellink-edge` network.
 
+After the Monitor stack is running, run `./scripts/connect-web-imports.sh`. It writes the Monitor import URL and the locally generated integration token to the existing Web `.env` without printing either secret. Recreate the Web API afterwards. New VoxelLink listings are then queued durably and delivered to Monitor automatically.
+
 ## Upgrades and backups
 
 Pull the new image or source, then run `docker compose up -d --build`. Embedded migrations are recorded in `schema_migrations` and are safe to rerun. Back up the PostgreSQL volume before upgrades and periodically thereafter; it contains the monitor configuration, checks, rollups, memberships, and Incident history.
