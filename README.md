@@ -6,6 +6,8 @@ It observes the player-facing Minecraft STATUS protocol, records incident eviden
 
 The frozen v1 product contract is in [docs/v1-requirements.md](docs/v1-requirements.md). Architecture decisions and component boundaries are kept in [docs/architecture.md](docs/architecture.md).
 
+Discordコミュニティオーナー向けの使い方は、[日本語ガイド](docs/owner-guide-ja.md)を参照してください。
+
 ## Components
 
 - `api`: health endpoint and HTTP foundation for status pages, OAuth, and owner console.
