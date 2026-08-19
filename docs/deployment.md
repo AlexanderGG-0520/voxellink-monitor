@@ -41,6 +41,10 @@ Attach the VoxelLink Web `postgres` service to `voxellink-data` with the alias `
 
 After the Monitor stack is running, run `./scripts/connect-web-imports.sh`. It writes the Monitor import URL and the locally generated integration token to the existing Web `.env` without printing either secret. Recreate the Web API afterwards. New VoxelLink listings are then queued durably and delivered to Monitor automatically.
 
+## Hosting Monitor below `/monitor`
+
+The Linode example publishes Monitor at `https://voxellink.alec-ofc.com/monitor`. Set the Cloudflare Tunnel ingress rule for the `/monitor` path (including its descendants) to `http://monitor-api:8080`; leave the default `/` route pointed at VoxelLink Web. `PUBLIC_BASE_URL` must include `/monitor`, and Discord must register `${PUBLIC_BASE_URL}/oauth/discord/callback` as the OAuth2 redirect URI. The application strips the public prefix internally, so its health check is available at `/monitor/healthz`.
+
 ## Upgrades and backups
 
 Pull the new image or source, then run `docker compose up -d --build`. Embedded migrations are recorded in `schema_migrations` and are safe to rerun. Back up the PostgreSQL volume before upgrades and periodically thereafter; it contains the monitor configuration, checks, rollups, memberships, and Incident history.
