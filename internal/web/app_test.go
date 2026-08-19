@@ -90,3 +90,15 @@ func TestSignedSessionAuthenticatesConsole(t *testing.T) {
 		t.Fatal("console did not render owned server")
 	}
 }
+
+func TestMonitorCanBeMountedBelowAPublicPath(t *testing.T) {
+	app, err := New(fakeRepository{servers: []domain.Server{{Name: "Example", Status: domain.Operational}}}, fakeImporter{}, Config{ClientID: "client", ClientSecret: "secret", PublicBaseURL: "https://voxellink.example.com/monitor", SessionSecret: "this-is-a-long-enough-test-session-secret", IntegrationToken: "this-is-a-long-enough-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/monitor/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `action="/monitor/servers/`) || !strings.Contains(response.Body.String(), `href="/monitor/login"`) {
+		t.Fatalf("subpath page was not rendered correctly: status=%d body=%q", response.Code, response.Body.String())
+	}
+}

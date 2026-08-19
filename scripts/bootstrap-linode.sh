@@ -48,9 +48,9 @@ FAILURE_RETRY_INTERVAL=10s
 DISCORD_BOT_TOKEN=${bot_token}
 DISCORD_CLIENT_ID=${client_id}
 DISCORD_CLIENT_SECRET=${client_secret}
-PUBLIC_BASE_URL=https://monitor.alec-ofc.com
+PUBLIC_BASE_URL=https://voxellink.alec-ofc.com/monitor
 SESSION_SECRET=$(openssl rand -hex 32)
-VOXELLINK_API_BASE_URL=https://voxellink.alec-ofc.com
+VOXELLINK_API_BASE_URL=http://voxellink-api:3000
 VOXELLINK_API_TOKEN=${monitor_token}
 INTEGRATION_SYNC_TOKEN=$(openssl rand -hex 32)
 EOF
