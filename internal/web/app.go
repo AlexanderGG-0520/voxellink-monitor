@@ -27,6 +27,7 @@ const sessionCookie = "voxellink_monitor_session"
 type Repository interface {
 	ServersForDiscordMember(context.Context, string) ([]domain.Server, error)
 	SnapshotByID(context.Context, string) (domain.ServerSnapshot, error)
+	SnapshotByExternalID(context.Context, string) (domain.ServerSnapshot, error)
 	PublicSnapshots(context.Context) ([]domain.ServerSnapshot, error)
 	Uptime24h(context.Context, string) (float64, error)
 	RecentIncidents(context.Context, string, int) ([]domain.Incident, error)
@@ -66,10 +67,54 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/login", a.login)
 	mux.HandleFunc("/oauth/discord/callback", a.callback)
 	mux.HandleFunc("/console", a.console)
+	mux.HandleFunc("/api/v1/public/servers/", a.publicStatus)
 	mux.HandleFunc("/servers/", a.report)
 	mux.HandleFunc("/console/servers/", a.updateServer)
 	mux.HandleFunc("/api/v1/integrations/voxellink/import", a.importServer)
 	return mux
+}
+// publicStatus is the stable, machine-readable status surface consumed by
+// VoxelLink. It deliberately uses the VoxelLink listing ID, never Monitor's
+// local database ID, so the listing remains the user's point of reference.
+func (a *App) publicStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	externalID := strings.TrimPrefix(r.URL.Path, "/api/v1/public/servers/")
+	if externalID == "" || strings.Contains(externalID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	snapshot, err := a.repository.SnapshotByExternalID(r.Context(), externalID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	uptime, err := a.repository.Uptime24h(r.Context(), snapshot.ID)
+	if err != nil {
+		http.Error(w, "could not load uptime", http.StatusInternalServerError)
+		return
+	}
+	incidents, err := a.repository.RecentIncidents(r.Context(), snapshot.ID, 3)
+	if err != nil {
+		http.Error(w, "could not load incidents", http.StatusInternalServerError)
+		return
+	}
+	var lastCheckedAt *time.Time
+	if !snapshot.LastCheckedAt.IsZero() {
+		lastCheckedAt = &snapshot.LastCheckedAt
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(struct {
+		ExternalServerID string              `json:"external_server_id"`
+		Status           domain.PublicStatus `json:"status"`
+		LastCheckedAt    *time.Time          `json:"last_checked_at"`
+		LastOutcome      domain.Outcome      `json:"last_outcome"`
+		LatencyMS        int64               `json:"latency_ms"`
+		Uptime24h        float64             `json:"uptime_24h"`
+		Incidents        []domain.Incident   `json:"incidents"`
+	}{externalID, snapshot.Status, lastCheckedAt, snapshot.LastOutcome, snapshot.Latency.Milliseconds(), uptime, incidents})
 }
 func (a *App) health(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 func (a *App) home(w http.ResponseWriter, r *http.Request) {

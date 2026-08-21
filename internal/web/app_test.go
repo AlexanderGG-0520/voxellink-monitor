@@ -28,6 +28,9 @@ func (fakeRepository) ScheduleMaintenanceForDiscordMember(context.Context, strin
 func (f fakeRepository) SnapshotByID(context.Context, string) (domain.ServerSnapshot, error) {
 	return domain.ServerSnapshot{Server: f.servers[0]}, nil
 }
+func (f fakeRepository) SnapshotByExternalID(context.Context, string) (domain.ServerSnapshot, error) {
+	return domain.ServerSnapshot{Server: f.servers[0]}, nil
+}
 func (f fakeRepository) PublicSnapshots(context.Context) ([]domain.ServerSnapshot, error) {
 	return []domain.ServerSnapshot{{Server: f.servers[0]}}, nil
 }
@@ -63,6 +66,17 @@ func TestHomeRendersReportForm(t *testing.T) {
 	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "/reports") {
 		t.Fatalf("public report form was not rendered: status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+func TestPublicStatusUsesVoxelLinkServerID(t *testing.T) {
+	app := testApp(t)
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/public/servers/voxel-server-id", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"external_server_id":"voxel-server-id"`) {
+		t.Fatalf("unexpected response: %q", response.Body.String())
 	}
 }
 func testApp(t *testing.T) *App {
